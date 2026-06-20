@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Code Agent CLI - 工作区与扩展功能原型</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.1.0/fonts/remixicon.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #000000;
+      --bg-panel: #0D0D0D;
+      --bg-hover: #1A1A1A;
+      --bg-surface: #262626;
+      --bg-surface-dim: #1A1A1A;
+      --text: #FFFFFF;
+      --text-secondary: #9CA3AF;
+      --text-muted: #4B5563;
+      --blue: #60A5FA;
+      --purple: #A78BFA;
+      --cyan: #67E8F9;
+      --orange: #FBBF24;
+      --red: #F87171;
+      --pink: #F472B6;
+      --border: #262626;
+      --success: #34D399;
+    }
+
+    body {
+      background: #111;
+      font-family: 'JetBrains Mono', 'Courier New', monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px;
+      min-height: 100vh;
+    }
+
+    .page-header {
+      width: 100%;
+      max-width: 900px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding: 8px 0;
+    }
+    .page-header h1 { color: var(--text); font-size: 13px; font-weight: 400; }
+    .page-header .nav a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 12px;
+      margin-left: 16px;
+      transition: color 0.15s;
+    }
+    .page-header .nav a:hover, .page-header .nav a.active { color: var(--blue); }
+
+    .terminal {
+      width: 100%;
+      max-width: 900px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      box-shadow: 0 4px 32px rgba(0,0,0,0.6);
+    }
+
+    .tab-bar {
+      display: flex;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+    }
+    .tab-bar .tab {
+      padding: 10px 20px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+      white-space: nowrap;
+      font-family: inherit;
+      background: none;
+      border-top: none;
+      border-left: none;
+      border-right: none;
+      user-select: none;
+    }
+    .tab-bar .tab:hover { color: var(--text); background: var(--bg-hover); }
+    .tab-bar .tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+    .scene { display: none; animation: fadeIn 0.25s ease; }
+    .scene.active { display: block; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 16px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-secondary);
+      letter-spacing: 0.3px;
+    }
+
+    .viewport { padding: 20px; min-height: 480px; }
+
+    .message {
+      margin-bottom: 16px;
+      padding-left: 12px;
+      border-left: 2px solid transparent;
+      animation: msgIn 0.2s ease;
+    }
+    @keyframes msgIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .message.user { border-left-color: var(--text-muted); }
+    .message.ai { border-left-color: var(--blue); }
+    .message .meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .message .meta .role { font-weight: 500; }
+    .message .meta .role.user-role { color: var(--text); }
+    .message .meta .role.ai-role { color: var(--blue); }
+    .message .content { font-size: 13px; line-height: 1.7; color: var(--text); }
+    .message .content .highlight { color: var(--cyan); }
+    .message .content .keyword { color: var(--purple); }
+
+    .input-area {
+      display: flex;
+      align-items: center;
+      padding: 10px 16px;
+      background: var(--bg-panel);
+      border-top: 1px solid var(--border);
+      gap: 8px;
+    }
+    .input-area .prompt { color: var(--text-muted); font-size: 13px; }
+    .input-area .input-field {
+      flex: 1;
+      background: none; border: none;
+      color: var(--text);
+      font-family: inherit; font-size: 13px;
+      outline: none; caret-color: var(--text);
+    }
+    .input-area .input-field::placeholder { color: var(--text-muted); }
+    .input-area .hint { font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+
+    .rainbow-text {
+      background: linear-gradient(90deg, var(--blue), var(--cyan), var(--purple), var(--pink));
+      background-size: 200% 100%;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: rainbowShift 2s linear infinite;
+    }
+    @keyframes rainbowShift {
+      0% { background-position: 0% 50%; }
+      100% { background-position: 200% 50%; }
+    }
+
+    .divider { border: none; border-top: 1px dashed var(--border); margin: 12px 0; }
+
+    /* ===== MULTI SESSION ===== */
+    .session-grid {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .session-card {
+      flex: 1;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 14px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .session-card:hover {
+      border-color: var(--text-muted);
+      background: var(--bg-hover);
+    }
+    .session-card.active {
+      border-color: var(--blue);
+      background: rgba(96,165,250,0.06);
+    }
+    .session-card .s-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .session-card .s-head .s-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+    }
+    .session-card .s-head .s-status {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+    .session-card .s-head .s-status.idle {
+      background: rgba(156,163,175,0.15);
+      color: var(--text-secondary);
+    }
+    .session-card .s-head .s-status.active-s {
+      background: rgba(167,139,250,0.15);
+      color: var(--purple);
+    }
+    .session-card .s-head .s-status.done {
+      background: rgba(52,211,153,0.15);
+      color: var(--success);
+    }
+    .session-card .s-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      gap: 12px;
+    }
+    .session-card .s-bar {
+      margin-top: 8px;
+      display: flex;
+      gap: 3px;
+    }
+    .session-card .s-bar .dot {
+      width: 6px; height: 6px;
+      border-radius: 1px;
+      background: var(--bg-surface);
+    }
+    .session-card .s-bar .dot.filled {
+      background: var(--purple);
+    }
+    .session-card .s-bar .dot.done-dot {
+      background: var(--success);
+    }
+    .session-card .s-tools {
+      margin-top: 6px;
+      display: flex;
+      gap: 4px;
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+    .session-card .s-tools .tool-tag {
+      padding: 1px 5px;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+    }
+    .new-session {
+      flex: 0 0 auto;
+      background: var(--bg-panel);
+      border: 1px dashed var(--text-muted);
+      border-radius: 4px;
+      padding: 14px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      cursor: pointer;
+      transition: all 0.15s;
+      min-width: 100px;
+    }
+    .new-session:hover {
+      border-color: var(--blue);
+      background: rgba(96,165,250,0.06);
+    }
+    .new-session .plus {
+      font-size: 18px;
+      color: var(--text-muted);
+    }
+    .new-session .label {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .session-detail {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      margin-bottom: 12px;
+    }
+    .session-detail .s-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-surface-dim);
+    }
+    .session-detail .s-header .left-s { display: flex; align-items: center; gap: 10px; }
+    .session-detail .s-header .left-s .tag {
+      font-size: 10px;
+      padding: 2px 8px;
+      background: rgba(167,139,250,0.15);
+      color: var(--purple);
+      border-radius: 3px;
+    }
+    .session-detail .s-content {
+      padding: 12px 14px;
+      font-size: 12px;
+      line-height: 1.8;
+      color: var(--text-secondary);
+      max-height: 120px;
+      overflow-y: auto;
+    }
+    .session-detail .s-content .line { margin-bottom: 2px; }
+    .session-detail .s-content .line .check { color: var(--success); }
+    .session-detail .s-content .line .cross { color: var(--red); }
+
+    /* ===== DIFF VIEW ===== */
+    .diff-file-list {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+    .diff-file-tab {
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg-panel);
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+      font-family: inherit;
+    }
+    .diff-file-tab:hover {
+      border-color: var(--text-muted);
+    }
+    .diff-file-tab.active {
+      border-color: var(--blue);
+      color: var(--blue);
+      background: rgba(96,165,250,0.08);
+    }
+    .diff-file-tab .count {
+      margin-left: 6px;
+      padding: 0 5px;
+      background: var(--bg-surface);
+      border-radius: 2px;
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    .diff-block {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .diff-block .diff-header {
+      padding: 6px 12px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      background: var(--bg-surface-dim);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+    }
+    .diff-block .diff-body {
+      padding: 8px 0;
+      font-size: 12px;
+      line-height: 1.8;
+      overflow-x: auto;
+      max-height: 240px;
+      overflow-y: auto;
+    }
+    .diff-block .diff-body .line { padding: 0 12px; display: flex; }
+    .diff-block .diff-body .line .ln { color: var(--text-muted); min-width: 32px; user-select: none; }
+    .diff-block .diff-body .line.add { background: rgba(52,211,153,0.08); color: var(--success); }
+    .diff-block .diff-body .line.del { background: rgba(248,113,113,0.08); color: var(--red); }
+    .diff-block .diff-body .line.ctx { color: var(--text-secondary); }
+
+    .diff-summary {
+      display: flex;
+      gap: 16px;
+      margin-top: 12px;
+      font-size: 12px;
+    }
+    .diff-summary .item { display: flex; align-items: center; gap: 4px; }
+    .diff-summary .item .plus { color: var(--success); }
+    .diff-summary .item .minus { color: var(--red); }
+    .diff-summary .item .num { color: var(--text); }
+
+    /* ===== RAG SEARCH ===== */
+    .rag-search-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0 12px;
+      margin-bottom: 12px;
+    }
+    .rag-search-box:focus-within { border-color: var(--blue); }
+    .rag-search-box .icon { color: var(--text-muted); font-size: 14px; }
+    .rag-search-box input {
+      flex: 1;
+      padding: 10px 4px;
+      background: none;
+      border: none;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+    }
+    .rag-search-box .shortcut {
+      padding: 2px 6px;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    .rag-result {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      margin-bottom: 8px;
+      overflow: hidden;
+      transition: border-color 0.15s;
+    }
+    .rag-result:hover { border-color: var(--text-muted); }
+    .rag-result .r-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      font-size: 12px;
+      background: var(--bg-surface-dim);
+    }
+    .rag-result .r-header .file-path { color: var(--cyan); }
+    .rag-result .r-header .score {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+    .rag-result .r-header .score.high {
+      background: rgba(52,211,153,0.15);
+      color: var(--success);
+    }
+    .rag-result .r-header .score.medium {
+      background: rgba(251,191,36,0.15);
+      color: var(--orange);
+    }
+    .rag-result .r-body {
+      padding: 8px 12px;
+      font-size: 12px;
+      line-height: 1.7;
+      color: var(--text-secondary);
+    }
+    .rag-result .r-body .match {
+      color: var(--text);
+      background: rgba(96,165,250,0.15);
+      padding: 0 2px;
+      border-radius: 2px;
+    }
+    .rag-result .r-body .ellipsis {
+      color: var(--text-muted);
+    }
+
+    /* ===== GOAL MODE ===== */
+    .goal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      margin-bottom: 12px;
+    }
+    .goal-header .left-g { display: flex; align-items: center; gap: 10px; }
+    .goal-header .left-g .g-icon { color: var(--orange); font-size: 16px; }
+    .goal-header .left-g .g-text { font-size: 13px; color: var(--text); }
+    .goal-header .left-g .g-model { font-size: 11px; color: var(--cyan); }
+    .goal-header .right-g { font-size: 11px; color: var(--text-muted); }
+
+    .goal-progress {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+      padding: 8px 14px;
+      background: rgba(251,191,36,0.06);
+      border: 1px solid rgba(251,191,36,0.12);
+      border-radius: 4px;
+    }
+    .goal-progress .g-bar {
+      flex: 1;
+      height: 6px;
+      background: var(--bg-surface);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .goal-progress .g-bar .fill {
+      height: 100%;
+      border-radius: 3px;
+      background: linear-gradient(90deg, var(--orange), var(--blue));
+      transition: width 0.5s ease;
+    }
+    .goal-progress .g-pct {
+      font-size: 12px;
+      color: var(--orange);
+      font-weight: 500;
+      min-width: 40px;
+      text-align: right;
+    }
+
+    .goal-task {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 8px 12px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      margin-bottom: 6px;
+      transition: border-color 0.15s;
+    }
+    .goal-task:hover { border-color: var(--text-muted); }
+    .goal-task .g-check {
+      width: 18px; height: 18px;
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .goal-task .g-check.done {
+      background: var(--success);
+      color: #000;
+      font-size: 11px;
+    }
+    .goal-task .g-check.pending {
+      border: 1px solid var(--text-muted);
+    }
+    .goal-task .g-check.running {
+      background: var(--purple);
+      color: #000;
+      font-size: 11px;
+    }
+    .goal-task .g-body { flex: 1; }
+    .goal-task .g-body .g-title { font-size: 13px; color: var(--text); }
+    .goal-task .g-body .g-detail { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+    .goal-task .g-status { font-size: 11px; white-space: nowrap; }
+    .goal-task .g-status.done { color: var(--success); }
+    .goal-task .g-status.pending { color: var(--text-muted); }
+    .goal-task .g-status.running { color: var(--purple); }
+
+    .spinner {
+      display: inline-block;
+      animation: spin 1s steps(8) infinite;
+    }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+    .footer-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 16px;
+      background: var(--bg-panel);
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .footer-bar .shortcuts { display: flex; gap: 12px; }
+    .footer-bar .shortcuts kbd .key {
+      padding: 1px 5px;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      font-size: 10px;
+      font-family: inherit;
+    }
+
+    @media (max-width: 720px) {
+      body { padding: 12px; }
+      .page-header { flex-direction: column; gap: 8px; align-items: flex-start; }
+      .session-grid { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>Code Agent CLI — 原型 04：工作区与扩展功能</h1>
+  <div class="nav">
+    <a href="prototype-01-core.html">01 核心对话</a>
+    <a href="prototype-02-modes.html">02 模式设计</a>
+    <a href="prototype-03-system.html">03 系统功能</a>
+    <a href="prototype-04-workspace.html" class="active">04 工作区</a>
+  </div>
+</div>
+
+<div class="terminal">
+  <div class="tab-bar">
+    <button class="tab active" data-scene="sessions"><i class="ri-clipboard-line"></i> 多会话管理</button>
+    <button class="tab" data-scene="diff"><i class="ri-file-edit-line"></i> 文件 Diff</button>
+    <button class="tab" data-scene="rag"><i class="ri-search-line"></i> RAG 搜索</button>
+    <button class="tab" data-scene="goal"><i class="ri-crosshair-line"></i> /goal 任务模式</button>
+  </div>
+
+  <!-- ==================== MULTI SESSION ==================== -->
+  <div class="scene active" id="scene-sessions">
+    <div class="status-bar">
+      <div class="left">
+        <span>Code Agent CLI v0.1.0</span>
+        <span style="color:var(--text-secondary);font-size:11px;">3 个活跃会话</span>
+      </div>
+      <div class="right">
+        <span style="color:var(--text-muted);font-size:11px;">Ctrl+T 新建 · Ctrl+W 关闭</span>
+      </div>
+    </div>
+
+    <div class="viewport">
+      <!-- Session cards -->
+      <div class="session-grid">
+        <div class="session-card active">
+          <div class="s-head">
+            <span class="s-name">#1 API 重构</span>
+            <span class="s-status active-s"><i class="ri-circle-fill" style="color:var(--purple);font-size:8px;vertical-align:middle;"></i> 执行中</span>
+          </div>
+          <div class="s-meta">
+            <span>Auto · Qwen-Plus</span>
+            <span>IN:8.2K</span>
+            <span>已用 3 轮</span>
+          </div>
+          <div class="s-bar">
+            <div class="dot done-dot"></div>
+            <div class="dot done-dot"></div>
+            <div class="dot filled"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+          </div>
+          <div class="s-tools">
+            <span class="tool-tag">read_file</span>
+            <span class="tool-tag">edit_file</span>
+            <span class="tool-tag">grep_search</span>
+          </div>
+        </div>
+
+        <div class="session-card">
+          <div class="s-head">
+            <span class="s-name">#2 Bug 修复</span>
+            <span class="s-status idle"><i class="ri-pause-circle-line"></i> 暂停</span>
+          </div>
+          <div class="s-meta">
+            <span>Normal · DeepSeek</span>
+            <span>IN:3.1K</span>
+            <span>已用 2 轮</span>
+          </div>
+          <div class="s-bar">
+            <div class="dot done-dot"></div>
+            <div class="dot done-dot"></div>
+            <div class="dot"></div>
+          </div>
+          <div class="s-tools">
+            <span class="tool-tag">read_file</span>
+            <span class="tool-tag">write_file</span>
+          </div>
+        </div>
+
+        <div class="session-card">
+          <div class="s-head">
+            <span class="s-name">#3 文档生成</span>
+            <span class="s-status done"><i class="ri-checkbox-circle-line"></i> 已完成</span>
+          </div>
+          <div class="s-meta">
+            <span>Plan · GLM-4</span>
+            <span>IN:5.6K</span>
+            <span>已完成 8/8 步</span>
+          </div>
+          <div class="s-bar">
+            <div class="dot done-dot"></div>
+            <div class="dot done-dot"></div>
+            <div class="dot done-dot"></div>
+            <div class="dot done-dot"></div>
+            <div class="dot done-dot"></div>
+          </div>
+          <div class="s-tools">
+            <span class="tool-tag">create_file</span>
+            <span class="tool-tag">edit_file</span>
+          </div>
+        </div>
+
+        <div class="new-session">
+          <span class="plus">+</span>
+          <span class="label">新建会话</span>
+        </div>
+      </div>
+
+      <!-- Session detail -->
+      <div class="session-detail">
+        <div class="s-header">
+          <div class="left-s">
+            <span style="color:var(--text);font-weight:500;">#1 API 重构</span>
+            <span class="tag"><i class="ri-circle-fill" style="color:var(--purple);font-size:8px;vertical-align:middle;"></i> Auto</span>
+            <span style="color:var(--cyan);font-size:11px;">Qwen-Plus</span>
+          </div>
+          <div>
+            <span style="color:var(--text-muted);font-size:11px;">2026-06-20 15:22</span>
+          </div>
+        </div>
+        <div class="s-content">
+          <div class="line"><span class="check"><i class="ri-check-line"></i></span> grep_search 定位 12 处需要重构的 API 路由</div>
+          <div class="line"><span class="check"><i class="ri-check-line"></i></span> read_file 分析 4 个核心路由文件</div>
+          <div class="line"><span class="check"><i class="ri-check-line"></i></span> edit_file 重构 users.py · 添加统一错误处理</div>
+          <div class="line"><span class="check"><i class="ri-check-line"></i></span> edit_file 重构 products.py · 抽取公共逻辑</div>
+          <div class="line"><span class="arrow" style="color:var(--purple);">→</span> <span class="rainbow-text">正在重构 orders.py ...</span></div>
+        </div>
+      </div>
+
+      <div style="padding:8px 0;">
+        <div style="display:flex;gap:8px;font-size:11px;color:var(--text-muted);">
+          <span>• 点击会话卡片切换活动会话</span>
+          <span>• <span class="key" style="padding:1px 4px;border:1px solid var(--border);border-radius:2px;">Ctrl+T</span> 新建</span>
+          <span>• <span class="key" style="padding:1px 4px;border:1px solid var(--border);border-radius:2px;">Ctrl+W</span> 关闭</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== FILE DIFF ==================== -->
+  <div class="scene" id="scene-diff">
+    <div class="status-bar">
+      <div class="left">
+        <span>Code Agent CLI v0.1.0</span>
+        <span style="color:var(--text-secondary);font-size:11px;">待审查的修改 · 3 个文件</span>
+      </div>
+      <div class="right">
+        <span style="color:var(--success);font-size:11px;">+24</span>
+        <span style="color:var(--red);font-size:11px;">-17</span>
+        <span style="color:var(--text-muted);font-size:11px;">总计 7 处修改</span>
+      </div>
+    </div>
+
+    <div class="viewport">
+      <div class="diff-file-list">
+        <button class="diff-file-tab active">
+          src/api/users.py <span class="count" style="color:var(--success);">+4</span><span class="count" style="color:var(--red);">-2</span>
+        </button>
+        <button class="diff-file-tab">
+          src/api/products.py <span class="count" style="color:var(--success);">+12</span><span class="count" style="color:var(--red);">-8</span>
+        </button>
+        <button class="diff-file-tab">
+          src/models/order.py <span class="count" style="color:var(--success);">+8</span><span class="count" style="color:var(--red);">-7</span>
+        </button>
+      </div>
+
+      <div class="diff-block">
+        <div class="diff-header">
+          <span>src/api/users.py</span>
+          <span style="color:var(--text-muted);">统一错误处理 · 添加 Pydantic 校验</span>
+        </div>
+        <div class="diff-body">
+          <div class="line ctx"><span class="ln">20</span><span>from fastapi import APIRouter, Depends</span></div>
+          <div class="line add"><span class="ln">  </span><span>+from pydantic import BaseModel</span></div>
+          <div class="line add"><span class="ln">  </span><span>+from app.exceptions import AppException</span></div>
+          <div class="line ctx"><span class="ln">23</span><span>router = APIRouter(prefix="/users")</span></div>
+          <div class="line ctx"><span class="ln">25</span><span>@router.get("/")</span></div>
+          <div class="line del"><span class="ln">26</span><span>-def list_users():</span></div>
+          <div class="line add"><span class="ln">  </span><span>+async def list_users():</span></div>
+          <div class="line ctx"><span class="ln">27</span><span>    users = db.query(User).all()</span></div>
+          <div class="line del"><span class="ln">28</span><span>-    return {"data": users}</span></div>
+          <div class="line add"><span class="ln">  </span><span>+    return {"data": [u.to_dict() for u in users]}</span></div>
+          <div class="line ctx"><span class="ln">30</span><span>@router.get("/{id}")</span></div>
+          <div class="line add"><span class="ln">  </span><span>+async def get_user(id: int):</span></div>
+          <div class="line add"><span class="ln">  </span><span>+    user = db.query(User).get(id)</span></div>
+          <div class="line add"><span class="ln">  </span><span>+    if not user:</span></div>
+          <div class="line add"><span class="ln">  </span><span>+        raise AppException.not_found("User")</span></div>
+          <div class="line add"><span class="ln">  </span><span>+    return user.to_dict()</span></div>
+        </div>
+      </div>
+
+      <div class="diff-summary">
+        <div class="item"><span class="plus">+</span><span class="num">24</span><span style="color:var(--text-secondary);"> 行新增</span></div>
+        <div class="item"><span class="minus">−</span><span class="num">17</span><span style="color:var(--text-secondary);"> 行删除</span></div>
+        <div class="item"><span style="color:var(--text-secondary);">共修改</span><span class="num">3</span><span style="color:var(--text-secondary);"> 个文件</span></div>
+        <div class="item" style="margin-left:auto;">
+          <span style="color:var(--text-muted);">Y 接受全部 · n 拒绝 · v 逐项审查</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== RAG SEARCH ==================== -->
+  <div class="scene" id="scene-rag">
+    <div class="status-bar">
+      <div class="left">
+        <span>Code Agent CLI v0.1.0</span>
+        <span style="color:var(--text-secondary);font-size:11px;">RAG 语义搜索 · 已索引 342 个文件</span>
+      </div>
+      <div class="right">
+        <span style="color:var(--text-muted);font-size:11px;">混合检索: 向量 + 关键词</span>
+      </div>
+    </div>
+
+    <div class="viewport">
+      <div class="rag-search-box">
+        <span class="icon"><i class="ri-search-line"></i></span>
+        <input type="text" value="用户认证和权限控制" disabled>
+        <span class="shortcut">@search</span>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-bottom:12px;font-size:11px;color:var(--text-muted);">
+        <span>找到 <span style="color:var(--text);">8</span> 个结果（0.23s）</span>
+        <span>|</span>
+        <span>筛选：<span style="color:var(--cyan);">所有文件</span></span>
+        <span>|</span>
+        <span>排序：<span style="color:var(--cyan);">相关度</span></span>
+      </div>
+
+      <div class="rag-result">
+        <div class="r-header">
+          <span class="file-path">src/auth/jwt.py</span>
+          <span class="score high">96% 匹配</span>
+        </div>
+        <div class="r-body">
+          def create_access_token(data: dict, expires_delta: <span class="match">timedelta</span> = None):<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;to_encode = data.copy()<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;if expires_delta:<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;expire = datetime.utcnow() + <span class="match">expires_delta</span><br>
+          &nbsp;&nbsp;&nbsp;&nbsp;else:<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="match">expire</span> = datetime.utcnow() + <span class="match">timedelta(minutes=15)</span><br>
+          <span class="ellipsis">... JWT 编码与签名逻辑 ...</span>
+        </div>
+      </div>
+
+      <div class="rag-result">
+        <div class="r-header">
+          <span class="file-path">src/auth/middleware.py</span>
+          <span class="score high">91% 匹配</span>
+        </div>
+        <div class="r-body">
+          class <span class="match">AuthMiddleware</span>:<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;async def __call__(self, request: Request, call_next):<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;token = request.headers.get("<span class="match">Authorization</span>")<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;if not token:<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;raise <span class="match">HTTPException(status_code=401)</span><br>
+          <span class="ellipsis">... 令牌校验与用户身份提取 ...</span>
+        </div>
+      </div>
+
+      <div class="rag-result">
+        <div class="r-header">
+          <span class="file-path">src/api/v1/users.py</span>
+          <span class="score medium">72% 匹配</span>
+        </div>
+        <div class="r-body">
+          @router.get("/me")<br>
+          async def get_current_user(<span class="match">current_user: User = Depends(get_current_user)</span>):<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;return current_user.<span class="match">to_dict()</span><br>
+          <span class="ellipsis">... 用户个人信息接口，依赖认证中间件获取当前用户 ...</span>
+        </div>
+      </div>
+
+      <div style="margin-top:8px;padding:8px 12px;background:var(--bg-panel);border-radius:4px;font-size:11px;color:var(--text-muted);display:flex;gap:16px;">
+        <span><i class="ri-lightbulb-line"></i> 使用 <span style="color:var(--cyan);">@file</span> 引用具体文件</span>
+        <span>使用 <span style="color:var(--cyan);">@function</span> 搜索函数定义</span>
+        <span>使用 <span style="color:var(--cyan);">@class</span> 搜索类定义</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== GOAL MODE ==================== -->
+  <div class="scene" id="scene-goal">
+    <div class="status-bar">
+      <div class="left">
+        <span>Code Agent CLI v0.1.0</span>
+        <span style="font-size:11px;color:var(--orange);font-weight:500;"><i class="ri-crosshair-line"></i> 任务模式</span>
+        <span style="color:var(--cyan);font-size:11px;">DeepSeek-Coder</span>
+      </div>
+      <div class="right">
+        <span style="color:var(--text-muted);font-size:11px;">/goal clear 结束任务</span>
+      </div>
+    </div>
+
+    <div class="viewport">
+      <div class="goal-header">
+        <div class="left-g">
+          <span class="g-icon"><i class="ri-crosshair-line" style="color:var(--orange);"></i></span>
+          <span class="g-text">给项目添加完整的用户认证系统</span>
+          <span class="g-model">DeepSeek-Coder</span>
+        </div>
+        <div class="right-g">
+          已运行 12 分钟 · 持续执行中
+        </div>
+      </div>
+
+      <div class="goal-progress">
+        <span style="color:var(--orange);font-size:11px;">总体进度</span>
+        <div class="g-bar">
+          <div class="fill" style="width:55%"></div>
+        </div>
+        <span class="g-pct">55%</span>
+      </div>
+
+      <div class="goal-task">
+        <div class="g-check done"><i class="ri-check-line"></i></div>
+        <div class="g-body">
+          <div class="g-title">安装 JWT 依赖</div>
+          <div class="g-detail">run_terminal · pip install pyjwt python-decouple</div>
+        </div>
+        <div class="g-status done"><i class="ri-check-line"></i> 已完成</div>
+      </div>
+
+      <div class="goal-task">
+        <div class="g-check done"><i class="ri-check-line"></i></div>
+        <div class="g-body">
+          <div class="g-title">创建用户模型</div>
+          <div class="g-detail">create_file · src/models/user.py · 包含 email/username/password_hash</div>
+        </div>
+        <div class="g-status done"><i class="ri-check-line"></i> 已完成</div>
+      </div>
+
+      <div class="goal-task">
+        <div class="g-check done"><i class="ri-check-line"></i></div>
+        <div class="g-body">
+          <div class="g-title">实现 JWT 工具函数</div>
+          <div class="g-detail">create_file · src/auth/jwt.py · create_access_token / verify_token</div>
+        </div>
+        <div class="g-status done"><i class="ri-check-line"></i> 已完成</div>
+      </div>
+
+      <div class="goal-task">
+        <div class="g-check running"><i class="ri-hourglass-line"></i></div>
+        <div class="g-body">
+          <div class="g-title">实现认证中间件</div>
+          <div class="g-detail">create_file · src/auth/middleware.py · <span class="rainbow-text" style="font-size:11px;">正在生成...</span></div>
+        </div>
+        <div class="g-status running"><span class="spinner">⠋</span> 执行中</div>
+      </div>
+
+      <div class="goal-task">
+        <div class="g-check pending"></div>
+        <div class="g-body">
+          <div class="g-title">创建注册/登录 API 路由</div>
+          <div class="g-detail">create_file · src/api/auth.py · POST /auth/register, POST /auth/login</div>
+        </div>
+        <div class="g-status pending"><i class="ri-hourglass-line"></i> 待执行</div>
+      </div>
+
+      <div class="goal-task">
+        <div class="g-check pending"></div>
+        <div class="g-body">
+          <div class="g-title">受保护路由示例</div>
+          <div class="g-detail">edit_file · src/api/users.py · 添加 Depends(get_current_user)</div>
+        </div>
+        <div class="g-status pending"><i class="ri-hourglass-line"></i> 待执行</div>
+      </div>
+
+      <div class="footer-bar" style="border-top: 1px solid var(--border);">
+        <div class="tips">
+          <span style="color:var(--orange);"><i class="ri-lightbulb-line"></i></span>
+          <span>/goal 模式会持续执行直到所有任务完成</span>
+        </div>
+        <div class="shortcuts">
+          <kbd><span class="key">ESC</span> 暂停任务</kbd>
+          <kbd><span class="key">Ctrl+C</span> 取消任务</kbd>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll('.tab-bar .tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelectorAll('.scene').forEach(s => s.classList.remove('active'));
+      document.getElementById('scene-' + tab.dataset.scene).classList.add('active');
+    });
+  });
+</script>
+
+</body>
+</html>

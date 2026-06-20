@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Code Agent CLI - 四种对话模式原型</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.1.0/fonts/remixicon.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #000000;
+      --bg-panel: #0D0D0D;
+      --bg-hover: #1A1A1A;
+      --bg-surface: #262626;
+      --bg-surface-dim: #1A1A1A;
+      --text: #FFFFFF;
+      --text-secondary: #9CA3AF;
+      --text-muted: #4B5563;
+      --blue: #60A5FA;
+      --purple: #A78BFA;
+      --cyan: #67E8F9;
+      --orange: #FBBF24;
+      --red: #F87171;
+      --pink: #F472B6;
+      --border: #262626;
+      --success: #34D399;
+    }
+
+    body {
+      background: #111;
+      font-family: 'JetBrains Mono', 'Courier New', monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px;
+      min-height: 100vh;
+    }
+
+    .page-header {
+      width: 100%;
+      max-width: 900px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding: 8px 0;
+    }
+    .page-header h1 {
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 400;
+    }
+    .page-header .nav a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 12px;
+      margin-left: 16px;
+      transition: color 0.15s;
+    }
+    .page-header .nav a:hover,
+    .page-header .nav a.active {
+      color: var(--blue);
+    }
+
+    .terminal {
+      width: 100%;
+      max-width: 900px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      box-shadow: 0 4px 32px rgba(0,0,0,0.6);
+    }
+
+    .tab-bar {
+      display: flex;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+    }
+    .tab-bar .tab {
+      padding: 10px 20px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+      white-space: nowrap;
+      font-family: inherit;
+      background: none;
+      border-top: none;
+      border-left: none;
+      border-right: none;
+      user-select: none;
+    }
+    .tab-bar .tab:hover {
+      color: var(--text);
+      background: var(--bg-hover);
+    }
+    .tab-bar .tab.active {
+      color: var(--blue);
+      border-bottom-color: var(--blue);
+    }
+
+    .scene {
+      display: none;
+      padding: 0;
+      animation: fadeIn 0.25s ease;
+    }
+    .scene.active { display: block; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 16px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+    .status-bar .left { display: flex; align-items: center; gap: 16px; }
+    .status-bar .right { display: flex; align-items: center; gap: 12px; }
+
+    .mode-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 10px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .mode-badge.normal {
+      background: rgba(96,165,250,0.15);
+      color: var(--blue);
+    }
+    .mode-badge.auto {
+      background: rgba(167,139,250,0.15);
+      color: var(--purple);
+    }
+    .mode-badge.plan {
+      background: rgba(251,191,36,0.15);
+      color: var(--orange);
+    }
+    .mode-badge.edit {
+      background: rgba(244,114,182,0.15);
+      color: var(--pink);
+    }
+
+    .viewport { padding: 20px; min-height: 420px; }
+
+    /* Mode intro strip */
+    .mode-intro {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+      padding: 12px 16px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      align-items: center;
+    }
+    .mode-intro .icon-badge {
+      width: 36px;
+      height: 36px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .mode-intro .info .mode-title {
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 2px;
+    }
+    .mode-intro .info .mode-desc {
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .message {
+      margin-bottom: 16px;
+      padding-left: 12px;
+      border-left: 2px solid transparent;
+      animation: msgIn 0.2s ease;
+    }
+    @keyframes msgIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .message.user { border-left-color: var(--text-muted); }
+    .message.ai { border-left-color: var(--blue); }
+    .message .meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .message .meta .role { font-weight: 500; }
+    .message .meta .role.user-role { color: var(--text); }
+    .message .meta .role.ai-role { color: var(--blue); }
+    .message .content {
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--text);
+    }
+    .message .content .highlight { color: var(--cyan); }
+    .message .content .keyword { color: var(--purple); }
+    .message .content .warn { color: var(--orange); }
+
+    .tool-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      margin: 8px 0 12px 0;
+      overflow: hidden;
+    }
+    .tool-card .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      font-size: 12px;
+      background: var(--bg-surface-dim);
+    }
+    .tool-card .header .left { display: flex; align-items: center; gap: 8px; }
+    .tool-card .header .left .tool-icon {
+      width: 18px; height: 18px; border-radius: 3px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: 600;
+    }
+    .tool-card .header .left .tool-name { font-weight: 500; }
+    .tool-card .body {
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+    }
+    .tool-card.done { border-left: 2px solid var(--success); }
+    .tool-card.done .tool-icon { background: var(--success); color: #000; }
+    .tool-card.done .status { color: var(--success); }
+    .tool-card.running { border-left: 2px solid var(--purple); }
+    .tool-card.running .tool-icon { background: var(--purple); color: #000; }
+    .tool-card.running .status { color: var(--purple); }
+    .tool-card.pending { border-left: 2px solid var(--text-muted); opacity: 0.6; }
+    .tool-card.pending .tool-icon { background: var(--text-muted); color: #000; }
+    .tool-card.pending .status { color: var(--text-muted); }
+
+    .param { display: flex; gap: 8px; }
+    .param .key { color: var(--text-muted); min-width: 40px; }
+    .param .value { color: var(--cyan); word-break: break-all; }
+
+    .input-area {
+      display: flex;
+      align-items: center;
+      padding: 10px 16px;
+      background: var(--bg-panel);
+      border-top: 1px solid var(--border);
+      gap: 8px;
+    }
+    .input-area .prompt { color: var(--text-muted); font-size: 13px; }
+    .input-area .input-field {
+      flex: 1;
+      background: none; border: none;
+      color: var(--text);
+      font-family: inherit; font-size: 13px;
+      outline: none; caret-color: var(--text);
+    }
+    .input-area .input-field::placeholder { color: var(--text-muted); }
+    .input-area .hint { font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+
+    /* ===== Plan mode specific ===== */
+    .plan-steps {
+      margin: 8px 0;
+    }
+    .plan-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 10px 12px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      margin-bottom: 8px;
+      transition: border-color 0.15s;
+    }
+    .plan-step:hover { border-color: var(--text-muted); }
+    .plan-step .step-icon {
+      width: 22px; height: 22px; border-radius: 3px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 600;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .plan-step .step-icon.pending {
+      border: 1px solid var(--text-muted);
+      color: var(--text-muted);
+      background: transparent;
+    }
+    .plan-step .step-icon.done {
+      background: var(--success);
+      color: #000;
+    }
+    .plan-step .step-icon.running {
+      background: var(--purple);
+      color: #000;
+    }
+    .plan-step .step-icon.error {
+      background: var(--red);
+      color: #000;
+    }
+    .plan-step .step-body { flex: 1; }
+    .plan-step .step-body .step-title {
+      font-size: 13px;
+      color: var(--text);
+      margin-bottom: 2px;
+    }
+    .plan-step .step-body .step-action {
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .plan-step .step-body .step-action .action-name {
+      color: var(--pink);
+    }
+    .plan-step .step-status {
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .plan-step .step-status.s-pending { color: var(--text-muted); }
+    .plan-step .step-status.s-done { color: var(--success); }
+    .plan-step .step-status.s-running { color: var(--purple); }
+    .plan-step .step-status.s-error { color: var(--red); }
+
+    .plan-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .plan-btn {
+      padding: 6px 16px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg-panel);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .plan-btn:hover {
+      background: var(--bg-hover);
+      border-color: var(--text-muted);
+    }
+    .plan-btn.primary {
+      background: var(--blue);
+      border-color: var(--blue);
+      color: #000;
+      font-weight: 500;
+    }
+    .plan-btn.primary:hover {
+      background: #7AB8FF;
+    }
+    .plan-btn.danger {
+      color: var(--red);
+    }
+    .plan-btn.danger:hover {
+      background: rgba(248,113,113,0.1);
+      border-color: var(--red);
+    }
+
+    /* ===== Auto mode specific ===== */
+    .auto-tracker {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      margin: 8px 0;
+      padding: 12px 16px;
+    }
+    .auto-tracker .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .auto-tracker .header .title {
+      font-size: 12px;
+      color: var(--purple);
+      font-weight: 500;
+    }
+    .auto-tracker .header .stats {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .auto-tracker .bar {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+    .auto-tracker .bar .segment {
+      height: 4px;
+      flex: 1;
+      border-radius: 2px;
+      background: var(--bg-surface);
+    }
+    .auto-tracker .bar .segment.done { background: var(--success); }
+    .auto-tracker .bar .segment.active { background: var(--purple); }
+    .auto-tracker .bar .segment.failed { background: var(--red); }
+    .auto-tracker .bar .segment.pending { background: var(--bg-surface); }
+    .auto-tracker .log {
+      font-size: 11px;
+      line-height: 1.8;
+    }
+    .auto-tracker .log .entry { color: var(--text-secondary); }
+    .auto-tracker .log .entry .check { color: var(--success); }
+    .auto-tracker .log .entry .cross { color: var(--red); }
+    .auto-tracker .log .entry .arrow { color: var(--purple); }
+
+    /* ===== Edit mode specific ===== */
+    .edit-banner {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: rgba(244,114,182,0.08);
+      border: 1px solid rgba(244,114,182,0.2);
+      border-radius: 4px;
+      margin-bottom: 12px;
+      font-size: 11px;
+      color: var(--pink);
+    }
+
+    .diff-block {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      margin: 8px 0;
+      overflow: hidden;
+    }
+    .diff-block .diff-header {
+      padding: 6px 12px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      background: var(--bg-surface-dim);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+    }
+    .diff-block .diff-body {
+      padding: 8px 0;
+      font-size: 12px;
+      line-height: 1.8;
+      overflow-x: auto;
+    }
+    .diff-block .diff-body .line {
+      padding: 0 12px;
+      display: flex;
+    }
+    .diff-block .diff-body .line .ln {
+      color: var(--text-muted);
+      min-width: 32px;
+      user-select: none;
+    }
+    .diff-block .diff-body .line.add {
+      background: rgba(52,211,153,0.08);
+      color: var(--success);
+    }
+    .diff-block .diff-body .line.del {
+      background: rgba(248,113,113,0.08);
+      color: var(--red);
+    }
+    .diff-block .diff-body .line.ctx {
+      color: var(--text-secondary);
+    }
+
+    .spinner {
+      display: inline-block;
+      animation: spin 1s steps(8) infinite;
+    }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+    .rainbow-text {
+      background: linear-gradient(90deg, var(--blue), var(--cyan), var(--purple), var(--pink));
+      background-size: 200% 100%;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: rainbowShift 2s linear infinite;
+    }
+    @keyframes rainbowShift {
+      0% { background-position: 0% 50%; }
+      100% { background-position: 200% 50%; }
+    }
+
+    .footer-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 16px;
+      background: var(--bg-panel);
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .footer-bar .shortcuts { display: flex; gap: 12px; }
+    .footer-bar .shortcuts kbd .key {
+      padding: 1px 5px;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      font-size: 10px;
+      font-family: inherit;
+    }
+
+    @media (max-width: 720px) {
+      body { padding: 12px; }
+      .page-header { flex-direction: column; gap: 8px; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>Code Agent CLI — 原型 02：四种对话模式</h1>
+  <div class="nav">
+    <a href="prototype-01-core.html">01 核心对话</a>
+    <a href="prototype-02-modes.html" class="active">02 模式设计</a>
+    <a href="prototype-03-system.html">03 系统功能</a>
+    <a href="prototype-04-workspace.html">04 工作区</a>
+  </div>
+</div>
+
+<div class="terminal">
+  <div class="tab-bar">
+    <button class="tab active" data-scene="normal"><i class="ri-circle-fill" style="color:var(--blue);"></i> Normal 模式</button>
+    <button class="tab" data-scene="auto"><i class="ri-circle-fill" style="color:var(--purple);"></i> Auto 模式</button>
+    <button class="tab" data-scene="plan"><i class="ri-circle-fill" style="color:var(--orange);"></i> Plan 模式</button>
+    <button class="tab" data-scene="edit"><i class="ri-circle-fill" style="color:var(--pink);"></i> Edit 模式</button>
+  </div>
+
+  <!-- ==================== NORMAL MODE ==================== -->
+  <div class="scene active" id="scene-normal">
+    <div class="status-bar">
+      <div class="left">
+        <span>Code Agent CLI v0.1.0</span>
+        <span class="mode-badge normal"><i class="ri-circle-fill" style="color:var(--blue);font-size:8px;vertical-align:middle;"></i> Normal</span>
+        <span style="color:var(--cyan);font-size:11px;">DeepSeek-Coder</span>
+      </div>
+      <div class="right">
+        <span style="color:var(--text-muted);font-size:11px;">标准对话 · 按需调工具</span>
+      </div>
+    </div>
+
+    <div class="viewport">
+      <div class="mode-intro" style="border-color:var(--blue);">
+        <div class="icon-badge" style="background:rgba(96,165,250,0.15);color:var(--blue);">N</div>
+        <div class="info">
+          <div class="mode-title" style="color:var(--blue);">Normal 模式 — 标准问答</div>
+          <div class="mode-desc">AI 按需调用工具，每次工具执行前等待你确认。适合日常编码、学习、代码审查。</div>
+        </div>
+      </div>
+
+      <div class="message user">
+        <div class="meta">
+          <span class="role user-role"><i class="ri-user-line"></i> 用户</span>
+          <span class="time">15:20</span>
+        </div>
+        <div class="content">这个函数的时间复杂度是多少？</div>
+      </div>
+
+      <div class="message ai">
+        <div class="meta">
+          <span class="role ai-role"><i class="ri-robot-line"></i> AI</span>
+          <span class="time">15:20</span>
+        </div>
+        <div class="content">
+          让我先读取相关代码分析一下。
+        </div>
+        <div class="tool-card done">
+          <div class="header">
+            <div class="left">
+              <span class="tool-icon">R</span>
+              <span class="tool-name" style="color:var(--pink);">read_file</span>
+            </div>
+            <div class="right">
+              <span class="status"><i class="ri-check-line"></i> 120ms</span>
+            </div>
+          </div>
+          <div class="body">
+            <div class="param"><span class="key">path</span><span class="value">src/utils/sort.py:24-48</span></div>
+          </div>
+        </div>
+        <div class="content" style="margin-top:6px;">
+          该函数实现的是 <span class="keyword">快速排序</span>：
+          <div style="margin-top:4px;">• 平均时间复杂度: <span class="highlight">O(n log n)</span></div>
+          <div>• 最坏时间复杂度: <span class="warn">O(n²)</span>（当输入已排序时）</div>
+          <div>• 空间复杂度: <span class="highlight">O(log n)</span></div>
+          <div style="margin-top:4px;color:var(--text-secondary);font-size:12px;">
+            建议: 最坏情况可通过随机选择 pivot 来避免
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <span class="prompt">&gt;</span>
+      <input class="input-field" type="text" placeholder="继续提问..." disabled>
+      <span class="hint"><span class="key" style="border:1px solid var(--border);padding:1px 5px;border-radius:2px;">Tab</span> 切换模式</span>
+    </div>
+  </div>
+
+  <!-- ==================== AUTO MODE ==================== -->
+  <div class="scene" id="scene-auto">
+    <div class="status-bar">
+      <div class="left">
+        <span>Code Agent CLI v0.1.0</span>
+        <span class="mode-badge auto"><i class="ri-circle-fill" style="color:var(--purple);font-size:8px;vertical-align:middle;"></i> Auto</span>
+        <span style="color:var(--cyan);font-size:11px;">Qwen-Plus</span>
+      </div>
+      <div class="right">
+        <span style="color:var(--text-muted);font-size:11px;">AI 自主规划执行 · 25轮上限</span>
+        <span style="color:var(--orange);font-size:11px;">--yolo</span>
+      </div>
+    </div>
+
+    <div class="viewport">
+      <div class="mode-intro" style="border-color:var(--purple);">
+        <div class="icon-badge" style="background:rgba(167,139,250,0.15);color:var(--purple);">A</div>
+        <div class="info">
+          <div class="mode-title" style="color:var(--purple);">Auto 模式 — 自主执行</div>
+          <div class="mode-desc">分配任务后 AI 自主规划、执行、修正。适合有经验的开发者处理批量任务。</div>
+        </div>
+      </div>
+
+      <div class="message user">
+        <div class="meta">
+          <span class="role user-role"><i class="ri-user-line"></i> 用户</span>
+          <span class="time">15:22</span>
+        </div>
+        <div class="content">把项目中的 console.log 全部替换为 logger.info，并添加对应的 import 语句</div>
+      </div>
+
+      <div class="message ai">
+        <div class="meta">
+          <span class="role ai-role"><i class="ri-robot-line"></i> AI</span>
+          <span class="time">15:22</span>
+        </div>
+
+        <!-- Auto tracker -->
+        <div class="auto-tracker">
+          <div class="header">
+            <span class="title"><i class="ri-hourglass-line"></i> 自主任务进度</span>
+            <span class="stats">第 3/25 轮 · 已用 2.4K tokens</span>
+          </div>
+          <div class="bar">
+            <div class="segment done"></div>
+            <div class="segment done"></div>
+            <div class="segment active"></div>
+            <div class="segment pending"></div>
+            <div class="segment pending"></div>
+            <div class="segment pending"></div>
+          </div>
+          <div class="log">
+            <div class="entry"><span class="check"><i class="ri-check-line"></i></span> grep_search 定位 24 处 console.log</div>
+            <div class="entry"><span class="check"><i class="ri-check-line"></i></span> read_file 分析 8 个源文件</div>
+            <div class="entry"><span class="arrow">→</span> <span class="rainbow-text">正在替换 src/app.js ...</span></div>
+          </div>
+        </div>
+
+        <div class="tool-card done">
+          <div class="header">
+            <div class="left"><span class="tool-icon">G</span><span class="tool-name" style="color:var(--pink);">grep_search</span></div>
+            <div class="right"><span class="status"><i class="ri-check-line"></i> 423ms · 24 matches</span></div>
+          </div>
+          <div class="body">
+            <div class="param"><span class="key">pattern</span><span class="value">console\.log\(</span></div>
+          </div>
+        </div>
+
+        <div class="tool-card done">
+          <div class="header">
+            <div class="left"><span class="tool-icon">R</span><span class="tool-name" style="color:var(--pink);">read_file</span></div>
+            <div class="right"><span class="status"><i class="ri-check-line"></i> 8 files</span></div>
+          </div>
+          <div class="body">
+            <div class="param"><span class="key">files</span><span class="value">src/app.js, src/utils/*.js, src/components/*.jsx</span></div>
+          </div>
+        </div>
+
+        <div class="tool-card running">
+          <div class="header">
+            <div class="left"><span class="tool-icon">E</span><span class="tool-name" style="color:var(--pink);">edit_file</span></div>
+            <div class="right"><span class="status"><span class="spinner">⠋</span> 编辑中...</span></div>
+          </div>
+          <div class="body">
+            <div class="param"><span class="key">path</span><span class="value">src/app.js</span></div>
+            <div class="param"><span class="key">progress</span><span class="value">3/8 files completed</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <span class="prompt">&gt;</span>
+      <input class="input-field" type="text" placeholder="AI 正在自主执行..." disabled>
+      <span class="hint">ESC 中断  |  Ctrl+C 取消任务</span>
+    </div>
+  </div>
+
+  <!-- ==================== PLAN MODE ==================== -->
+  <div class="scene" id="scene-plan">
+    <div class="status-bar">
+      <div class="left">
+        <span>Code Agent CLI v0.1.0</span>
+        <span class="mode-badge plan"><i class="ri-circle-fill" style="color:var(--orange);font-size:8px;vertical-align:middle;"></i> Plan</span>
+        <span style="color:var(--cyan);font-size:11px;">GLM-4</span>
+      </div>
+      <div class="right">
+        <span style="color:var(--text-muted);font-size:11px;">先计划后执行 · 步骤可确认</span>
+      </div>
+    </div>
+
+    <div class="viewport">
+      <div class="mode-intro" style="border-color:var(--orange);">
+        <div class="icon-badge" style="background:rgba(251,191,36,0.15);color:var(--orange);">P</div>
+        <div class="info">
+          <div class="mode-title" style="color:var(--orange);">Plan 模式 — 计划驱动</div>
+          <div class="mode-desc">AI 先输出实施计划，你确认后逐步执行。适合复杂功能开发、大型重构。</div>
+        </div>
+      </div>
+
+      <div class="message user">
+        <div class="meta">
+          <span class="role user-role"><i class="ri-user-line"></i> 用户</span>
+          <span class="time">15:25</span>
+        </div>
+        <div class="content">给项目添加 JWT 用户认证功能</div>
+      </div>
+
+      <div class="message ai">
+        <div class="meta">
+          <span class="role ai-role"><i class="ri-robot-line"></i> AI</span>
+          <span class="time">15:25</span>
+        </div>
+        <div class="content">
+          已分析项目结构，以下是实施计划：
+        </div>
+      </div>
+
+      <div class="plan-steps">
+        <div class="plan-step">
+          <div class="step-icon done"><i class="ri-check-line"></i></div>
+          <div class="step-body">
+            <div class="step-title">安装依赖</div>
+            <div class="step-action">
+              <span class="action-name">run_terminal</span>
+              <span>pip install pyjwt python-decouple</span>
+            </div>
+          </div>
+          <div class="step-status s-done"><i class="ri-check-line"></i> 已完成</div>
+        </div>
+
+        <div class="plan-step">
+          <div class="step-icon done"><i class="ri-check-line"></i></div>
+          <div class="step-body">
+            <div class="step-title">创建 auth 配置模块</div>
+            <div class="step-action">
+              <span class="action-name">create_file</span>
+              <span>src/auth/config.py</span>
+            </div>
+          </div>
+          <div class="step-status s-done"><i class="ri-check-line"></i> 已完成</div>
+        </div>
+
+        <div class="plan-step">
+          <div class="step-icon running"><i class="ri-hourglass-line"></i></div>
+          <div class="step-body">
+            <div class="step-title">实现 JWT 工具函数 · <span class="rainbow-text" style="font-size:12px;">执行中...</span></div>
+            <div class="step-action">
+              <span class="action-name">create_file</span>
+              <span>src/auth/jwt.py</span>
+            </div>
+          </div>
+          <div class="step-status s-running"><i class="ri-hourglass-line"></i> 执行中</div>
+        </div>
+
+        <div class="plan-step">
+          <div class="step-icon pending">◻</div>
+          <div class="step-body">
+            <div class="step-title">创建认证中间件</div>
+            <div class="step-action">
+              <span class="action-name">create_file</span>
+              <span>src/auth/middleware.py</span>
+            </div>
+          </div>
+          <div class="step-status s-pending"><i class="ri-hourglass-line"></i> 待执行</div>
+        </div>
+
+        <div class="plan-step">
+          <div class="step-icon pending">◻</div>
+          <div class="step-body">
+            <div class="step-title">路由注册</div>
+            <div class="step-action">
+              <span class="action-name">edit_file</span>
+              <span>src/main.py（注册蓝图）</span>
+            </div>
+          </div>
+          <div class="step-status s-pending"><i class="ri-hourglass-line"></i> 待执行</div>
+        </div>
+      </div>
+
+      <div class="plan-actions">
+        <button class="plan-btn primary"><i class="ri-checkbox-circle-line"></i> 确认并继续执行</button>
+        <button class="plan-btn"><i class="ri-edit-line"></i> 修改计划</button>
+        <button class="plan-btn"><i class="ri-skip-forward-line"></i> 跳过当前步骤</button>
+        <button class="plan-btn danger"><i class="ri-close-line"></i> 取消任务</button>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <span class="prompt">&gt;</span>
+      <input class="input-field" type="text" placeholder="确认计划或提出修改意见..." disabled>
+      <span class="hint">Y 确认  |  N 取消  |  Tab 切换模式</span>
+    </div>
+  </div>
+
+  <!-- ==================== EDIT MODE ==================== -->
+  <div class="scene" id="scene-edit">
+    <div class="status-bar">
+      <div class="left">
+        <span>Code Agent CLI v0.1.0</span>
+        <span class="mode-badge edit"><i class="ri-circle-fill" style="color:var(--pink);font-size:8px;vertical-align:middle;"></i> Edit</span>
+        <span style="color:var(--cyan);font-size:11px;">DeepSeek-Coder</span>
+      </div>
+      <div class="right">
+        <span style="color:var(--text-muted);font-size:11px;">仅文件编辑 · 不执行命令</span>
+      </div>
+    </div>
+
+    <div class="viewport">
+      <div class="mode-intro" style="border-color:var(--pink);">
+        <div class="icon-badge" style="background:rgba(244,114,182,0.15);color:var(--pink);">E</div>
+        <div class="info">
+          <div class="mode-title" style="color:var(--pink);">Edit 模式 — 纯编辑</div>
+          <div class="mode-desc">AI 只接受文件编辑请求，不执行任何终端命令。专注改代码，安全可控。</div>
+        </div>
+      </div>
+
+      <div class="edit-banner">
+        <i class="ri-flashlight-line"></i> Edit 模式已启用 — AI 不会执行任何终端命令，仅进行文件编辑操作
+      </div>
+
+      <div class="message user">
+        <div class="meta">
+          <span class="role user-role"><i class="ri-user-line"></i> 用户</span>
+          <span class="time">15:28</span>
+        </div>
+        <div class="content">
+          把 User 模型中的 <span class="highlight">email</span> 字段改为必填，添加唯一约束
+        </div>
+      </div>
+
+      <div class="message ai">
+        <div class="meta">
+          <span class="role ai-role"><i class="ri-robot-line"></i> AI</span>
+          <span class="time">15:28</span>
+        </div>
+
+        <div class="tool-card done">
+          <div class="header">
+            <div class="left"><span class="tool-icon">R</span><span class="tool-name" style="color:var(--pink);">read_file</span></div>
+            <div class="right"><span class="status"><i class="ri-check-line"></i> 98ms</span></div>
+          </div>
+          <div class="body">
+            <div class="param"><span class="key">path</span><span class="value">src/models/user.py</span></div>
+          </div>
+        </div>
+
+        <div class="content" style="margin-top:4px;">以下是修改内容：</div>
+
+        <div class="diff-block">
+          <div class="diff-header">
+            <span>src/models/user.py</span>
+            <span class="stats">-2 +4</span>
+          </div>
+          <div class="diff-body">
+            <div class="line ctx"><span class="ln">10</span><span>class User(Base):</span></div>
+            <div class="line ctx"><span class="ln">11</span><span>    __tablename__ = "users"</span></div>
+            <div class="line del"><span class="ln">12</span><span>-    email = Column(String(255))</span></div>
+            <div class="line add"><span class="ln">  </span><span>+    email = Column(String(255), nullable=False, unique=True, index=True)</span></div>
+            <div class="line ctx"><span class="ln">13</span><span>    username = Column(String(100))</span></div>
+            <div class="line del"><span class="ln">14</span><span>-    username = Column(String(100), nullable=False)</span></div>
+            <div class="line add"><span class="ln">  </span><span>+    username = Column(String(100), nullable=False, index=True)</span></div>
+          </div>
+        </div>
+
+        <div class="tool-card done">
+          <div class="header">
+            <div class="left"><span class="tool-icon">E</span><span class="tool-name" style="color:var(--pink);">edit_file</span></div>
+            <div class="right"><span class="status"><i class="ri-check-line"></i> 85ms</span></div>
+          </div>
+          <div class="body">
+            <div class="param"><span class="key">path</span><span class="value">src/models/user.py</span></div>
+            <div class="param"><span class="key">result</span><span class="value" style="color:var(--success);">2 处修改已应用</span></div>
+          </div>
+        </div>
+
+        <div class="content" style="margin-top:4px;">
+          <i class="ri-checkbox-circle-line"></i> 修改完成。<span class="highlight">email</span> 字段已改为必填并添加了唯一索引和普通索引。
+          <div style="color:var(--text-secondary);font-size:12px;margin-top:4px;">
+            <i class="ri-lightbulb-line"></i> 别忘了运行数据库迁移来应用这些变更
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <span class="prompt">&gt;</span>
+      <input class="input-field" type="text" placeholder="提出编辑请求..." disabled>
+      <span class="hint">仅文件编辑 · 不执行命令</span>
+    </div>
+
+    <div class="footer-bar">
+      <div class="tips">
+        <span style="color:var(--orange);"><i class="ri-lightbulb-line"></i></span>
+        <span>Edit 模式下 <span style="color:var(--pink);">run_terminal</span> 等执行类工具不可用</span>
+      </div>
+      <div class="shortcuts">
+        <kbd><span class="key">Tab</span> 切换到 Normal</kbd>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll('.tab-bar .tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelectorAll('.scene').forEach(s => s.classList.remove('active'));
+      document.getElementById('scene-' + tab.dataset.scene).classList.add('active');
+    });
+  });
+</script>
+
+</body>
+</html>

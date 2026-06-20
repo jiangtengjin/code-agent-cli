@@ -1,0 +1,1183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Code Agent CLI - 核心对话流程原型</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.1.0/fonts/remixicon.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #000000;
+      --bg-panel: #0D0D0D;
+      --bg-hover: #1A1A1A;
+      --bg-surface: #262626;
+      --bg-surface-dim: #1A1A1A;
+      --text: #FFFFFF;
+      --text-secondary: #9CA3AF;
+      --text-muted: #4B5563;
+      --blue: #60A5FA;
+      --purple: #A78BFA;
+      --cyan: #67E8F9;
+      --orange: #FBBF24;
+      --red: #F87171;
+      --pink: #F472B6;
+      --border: #262626;
+      --success: #34D399;
+    }
+
+    body {
+      background: #111;
+      font-family: 'JetBrains Mono', 'Courier New', monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px;
+      min-height: 100vh;
+    }
+
+    /* Page title bar */
+    .page-header {
+      width: 100%;
+      max-width: 900px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding: 8px 0;
+    }
+    .page-header h1 {
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 400;
+      letter-spacing: 0.5px;
+    }
+    .page-header .nav a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 12px;
+      margin-left: 16px;
+      transition: color 0.15s;
+    }
+    .page-header .nav a:hover,
+    .page-header .nav a.active {
+      color: var(--blue);
+    }
+
+    /* Terminal container */
+    .terminal {
+      width: 100%;
+      max-width: 900px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      box-shadow: 0 4px 32px rgba(0,0,0,0.6);
+      position: relative;
+    }
+
+    /* Tab bar */
+    .tab-bar {
+      display: flex;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+    }
+    .tab-bar .tab {
+      padding: 10px 20px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+      white-space: nowrap;
+      font-family: inherit;
+      background: none;
+      border-top: none;
+      border-left: none;
+      border-right: none;
+      user-select: none;
+    }
+    .tab-bar .tab:hover {
+      color: var(--text);
+      background: var(--bg-hover);
+    }
+    .tab-bar .tab.active {
+      color: var(--blue);
+      border-bottom-color: var(--blue);
+    }
+
+    /* Terminal viewport */
+    .viewport {
+      padding: 0;
+      position: relative;
+      min-height: 500px;
+    }
+
+    /* Each scene */
+    .scene {
+      display: none;
+      padding: 20px;
+      animation: fadeIn 0.25s ease;
+    }
+    .scene.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    /* Status bar simulation */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 16px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-secondary);
+      letter-spacing: 0.3px;
+    }
+    .status-bar .left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .status-bar .left .mode {
+      color: var(--purple);
+      font-weight: 500;
+    }
+    .status-bar .left .model {
+      color: var(--cyan);
+    }
+    .status-bar .right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .status-bar .right .tokens {
+      color: var(--text-muted);
+    }
+
+    /* Message styles */
+    .message {
+      margin-bottom: 16px;
+      padding-left: 12px;
+      border-left: 2px solid transparent;
+      animation: msgIn 0.2s ease;
+    }
+    @keyframes msgIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .message.user {
+      border-left-color: var(--text-muted);
+    }
+    .message.ai {
+      border-left-color: var(--blue);
+    }
+    .message.system {
+      border-left-color: var(--text-muted);
+    }
+
+    .message .meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .message .meta .role {
+      font-weight: 500;
+    }
+    .message .meta .role.user-role {
+      color: var(--text);
+    }
+    .message .meta .role.ai-role {
+      color: var(--blue);
+    }
+    .message .meta .role.sys-role {
+      color: var(--orange);
+    }
+    .message .meta .time {
+      color: var(--text-muted);
+    }
+
+    .message .content {
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--text);
+    }
+    .message .content .highlight {
+      color: var(--cyan);
+    }
+    .message .content .keyword {
+      color: var(--purple);
+    }
+    .message .content .warn {
+      color: var(--orange);
+    }
+    .message .content .err {
+      color: var(--red);
+    }
+
+    /* Thinking block */
+    .thinking-block {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      margin: 8px 0 12px 0;
+      overflow: hidden;
+    }
+    .thinking-block .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      user-select: none;
+      background: var(--bg-surface-dim);
+    }
+    .thinking-block .header .label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .thinking-block .header .label .icon {
+      color: var(--purple);
+    }
+    .thinking-block .header .toggle {
+      color: var(--text-muted);
+      font-size: 11px;
+    }
+    .thinking-block .body {
+      padding: 8px 12px 12px 12px;
+      font-size: 12px;
+      line-height: 1.8;
+    }
+    .thinking-block .body .line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-secondary);
+    }
+    .thinking-block .body .line.done {
+      color: var(--text-muted);
+    }
+    .thinking-block .body .line.done .check {
+      color: var(--success);
+    }
+    .thinking-block .body .line.active .spinner {
+      color: var(--purple);
+    }
+    .thinking-block .body .line.active .desc {
+      color: var(--text);
+    }
+
+    /* Rainbow shimmer for active thinking text */
+    .rainbow-text {
+      background: linear-gradient(90deg, var(--blue), var(--cyan), var(--purple), var(--pink), var(--blue));
+      background-size: 200% 100%;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: rainbowShift 2s linear infinite;
+    }
+    @keyframes rainbowShift {
+      0% { background-position: 0% 50%; }
+      100% { background-position: 200% 50%; }
+    }
+
+    /* Spinner animation */
+    .spinner {
+      display: inline-block;
+      animation: spin 1s steps(8) infinite;
+    }
+    @keyframes spin {
+      0% { content: '⠋'; }
+      12.5% { content: '⠙'; }
+      25% { content: '⠹'; }
+      37.5% { content: '⠸'; }
+      50% { content: '⠼'; }
+      62.5% { content: '⠴'; }
+      75% { content: '⠦'; }
+      87.5% { content: '⠧'; }
+    }
+
+    /* Tool call card */
+    .tool-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      margin: 8px 0 12px 0;
+      overflow: hidden;
+      transition: border-color 0.15s;
+    }
+    .tool-card:hover {
+      border-color: var(--text-muted);
+    }
+    .tool-card .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      font-size: 12px;
+      background: var(--bg-surface-dim);
+    }
+    .tool-card .header .left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .tool-card .header .left .tool-icon {
+      width: 18px;
+      height: 18px;
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 600;
+    }
+    .tool-card .header .left .tool-name {
+      font-weight: 500;
+    }
+    .tool-card .header .right .status {
+      font-size: 11px;
+    }
+    .tool-card .body {
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+    }
+    .tool-card .body .param {
+      display: flex;
+      gap: 8px;
+    }
+    .tool-card .body .param .key {
+      color: var(--text-muted);
+      min-width: 40px;
+    }
+    .tool-card .body .param .value {
+      color: var(--cyan);
+      word-break: break-all;
+    }
+
+    /* Tool card statuses */
+    .tool-card.done {
+      border-left: 2px solid var(--success);
+    }
+    .tool-card.done .header .left .tool-icon {
+      background: var(--success);
+      color: #000;
+    }
+    .tool-card.done .header .right .status {
+      color: var(--success);
+    }
+
+    .tool-card.running {
+      border-left: 2px solid var(--purple);
+    }
+    .tool-card.running .header .left .tool-icon {
+      background: var(--purple);
+      color: #000;
+    }
+    .tool-card.running .header .right .status {
+      color: var(--purple);
+    }
+
+    .tool-card.pending {
+      border-left: 2px solid var(--text-muted);
+      opacity: 0.6;
+    }
+    .tool-card.pending .header .left .tool-icon {
+      background: var(--text-muted);
+      color: #000;
+    }
+    .tool-card.pending .header .right .status {
+      color: var(--text-muted);
+    }
+
+    .tool-card.error {
+      border-left: 2px solid var(--red);
+    }
+    .tool-card.error .header .left .tool-icon {
+      background: var(--red);
+      color: #000;
+    }
+    .tool-card.error .header .right .status {
+      color: var(--red);
+    }
+
+    /* Progress bar */
+    .progress-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .progress-bar .track {
+      flex: 1;
+      height: 4px;
+      background: var(--bg-surface);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .progress-bar .track .fill {
+      height: 100%;
+      border-radius: 2px;
+      background: var(--purple);
+      transition: width 0.3s ease;
+    }
+    .progress-bar .pct {
+      font-size: 11px;
+      color: var(--text-muted);
+      min-width: 32px;
+    }
+
+    /* Diff block */
+    .diff-block {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      margin: 8px 0;
+      overflow: hidden;
+    }
+    .diff-block .diff-header {
+      padding: 6px 12px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      background: var(--bg-surface-dim);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .diff-block .diff-header .stats {
+      color: var(--text-muted);
+    }
+    .diff-block .diff-body {
+      padding: 8px 0;
+      font-size: 12px;
+      line-height: 1.8;
+      overflow-x: auto;
+    }
+    .diff-block .diff-body .line {
+      padding: 0 12px;
+      display: flex;
+    }
+    .diff-block .diff-body .line .ln {
+      color: var(--text-muted);
+      min-width: 32px;
+      user-select: none;
+    }
+    .diff-block .diff-body .line.add {
+      background: rgba(52, 211, 153, 0.08);
+      color: var(--success);
+    }
+    .diff-block .diff-body .line.del {
+      background: rgba(248, 113, 113, 0.08);
+      color: var(--red);
+    }
+    .diff-block .diff-body .line.ctx {
+      color: var(--text-secondary);
+    }
+
+    /* Input area */
+    .input-area {
+      display: flex;
+      align-items: center;
+      padding: 10px 16px;
+      background: var(--bg-panel);
+      border-top: 1px solid var(--border);
+      gap: 8px;
+    }
+    .input-area .prompt {
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+    .input-area .input-field {
+      flex: 1;
+      background: none;
+      border: none;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+      caret-color: var(--text);
+    }
+    .input-area .input-field::placeholder {
+      color: var(--text-muted);
+    }
+    .input-area .hint {
+      font-size: 10px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    /* Footer hint bar */
+    .footer-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 16px;
+      background: var(--bg-panel);
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .footer-bar .tips {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .footer-bar .tips .tip-icon {
+      color: var(--orange);
+    }
+    .footer-bar .shortcuts {
+      display: flex;
+      gap: 12px;
+    }
+    .footer-bar .shortcuts kbd {
+      color: var(--text-secondary);
+    }
+    .footer-bar .shortcuts kbd .key {
+      padding: 1px 5px;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      font-size: 10px;
+      font-family: inherit;
+    }
+
+    /* Welcome screen specific */
+    .welcome {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 400px;
+      text-align: center;
+    }
+    .welcome .logo-block {
+      margin-bottom: 32px;
+    }
+    .welcome .logo-block .title {
+      font-size: 28px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: 1px;
+      margin-bottom: 4px;
+    }
+    .welcome .logo-block .subtitle {
+      font-size: 14px;
+      color: var(--text-secondary);
+      font-weight: 300;
+      letter-spacing: 2px;
+    }
+    .welcome .logo-block .ascii-border {
+      color: var(--text-muted);
+      font-size: 12px;
+      margin: 8px 0;
+    }
+    .welcome .info-cards {
+      display: flex;
+      gap: 24px;
+      margin-bottom: 28px;
+    }
+    .welcome .info-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+    .welcome .info-card .label {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .welcome .info-card .value {
+      font-size: 13px;
+      color: var(--text);
+    }
+    .welcome .info-card .value.model-v {
+      color: var(--cyan);
+    }
+    .welcome .info-card .value.mode-v {
+      color: var(--purple);
+    }
+    .welcome .info-card .value.dir-v {
+      color: var(--text-secondary);
+    }
+    .welcome .big-input {
+      width: 100%;
+      max-width: 560px;
+      position: relative;
+      margin-bottom: 24px;
+    }
+    .welcome .big-input input {
+      width: 100%;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 12px 16px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 14px;
+      outline: none;
+      caret-color: var(--text);
+      transition: border-color 0.15s;
+    }
+    .welcome .big-input input:focus {
+      border-color: var(--blue);
+    }
+    .welcome .big-input input::placeholder {
+      color: var(--text-muted);
+    }
+
+    /* Divider */
+    .divider {
+      border: none;
+      border-top: 1px dashed var(--border);
+      margin: 12px 0;
+    }
+
+    /* Status badges in streaming section */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 500;
+    }
+    .badge.blue {
+      background: rgba(96, 165, 250, 0.15);
+      color: var(--blue);
+    }
+    .badge.purple {
+      background: rgba(167, 139, 250, 0.15);
+      color: var(--purple);
+    }
+    .badge.orange {
+      background: rgba(251, 191, 36, 0.15);
+      color: var(--orange);
+    }
+
+    /* Streaming text cursor blink */
+    .cursor-blink {
+      animation: blink 1s step-end infinite;
+    }
+    @keyframes blink {
+      50% { opacity: 0; }
+    }
+
+    /* Responsive */
+    @media (max-width: 720px) {
+      body { padding: 12px; }
+      .page-header { flex-direction: column; gap: 8px; align-items: flex-start; }
+      .welcome .info-cards { flex-direction: column; gap: 12px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>Code Agent CLI — 原型 01：核心对话流程</h1>
+  <div class="nav">
+    <a href="prototype-01-core.html" class="active">01 核心对话</a>
+    <a href="prototype-02-modes.html">02 模式设计</a>
+    <a href="prototype-03-system.html">03 系统功能</a>
+    <a href="prototype-04-workspace.html">04 工作区</a>
+  </div>
+</div>
+
+<div class="terminal">
+  <!-- Tab Bar -->
+  <div class="tab-bar">
+    <button class="tab active" data-scene="welcome"><i class="ri-home-line"></i> 欢迎屏</button>
+    <button class="tab" data-scene="chat"><i class="ri-chat-1-line"></i> 对话视图</button>
+    <button class="tab" data-scene="streaming"><i class="ri-flashlight-line"></i> Streaming</button>
+    <button class="tab" data-scene="tools"><i class="ri-tools-line"></i> 工具调用</button>
+  </div>
+
+  <!-- ==================== SCENE 1: WELCOME ==================== -->
+  <div class="scene active" id="scene-welcome">
+    <div class="viewport">
+      <div class="welcome">
+        <div class="logo-block">
+          <div class="ascii-border">╔══════════════════════════════════════╗</div>
+          <div class="title">Code Agent CLI</div>
+          <div class="subtitle">终端原生编码智能体</div>
+          <div class="ascii-border">╚══════════════════════════════════════╝</div>
+        </div>
+
+        <div class="info-cards">
+          <div class="info-card">
+            <span class="label">当前模型</span>
+            <span class="value model-v">DeepSeek-Coder</span>
+          </div>
+          <div class="info-card">
+            <span class="label">对话模式</span>
+            <span class="value mode-v">Normal</span>
+          </div>
+          <div class="info-card">
+            <span class="label">工作目录</span>
+            <span class="value dir-v">/projects/my-app</span>
+          </div>
+        </div>
+
+        <hr class="divider">
+
+        <div class="big-input">
+          <input type="text" placeholder="输入你的问题，或输入 /help 查看帮助" disabled>
+        </div>
+
+        <hr class="divider">
+
+        <div class="footer-bar" style="border-top: none; background: transparent; padding: 0;">
+          <div class="tips">
+            <span class="tip-icon"><i class="ri-lightbulb-line"></i></span>
+            <span>/mode auto → AI 自主规划执行</span>
+            <span style="color:var(--text-muted);margin-left:12px;">(1/6)</span>
+          </div>
+          <div class="shortcuts">
+            <kbd><span class="key">Tab</span> 切换模式</kbd>
+            <kbd><span class="key">/help</span> 帮助</kbd>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== SCENE 2: CHAT VIEW ==================== -->
+  <div class="scene" id="scene-chat">
+    <div class="status-bar">
+      <div class="left">
+        <span>Code Agent CLI v0.1.0</span>
+        <span class="mode">Normal</span>
+        <span class="model">DeepSeek-Coder</span>
+      </div>
+      <div class="right">
+        <span class="tokens">IN:4.2K</span>
+        <span class="tokens">OUT:1.1K</span>
+      </div>
+    </div>
+
+    <div class="viewport" style="padding: 20px;">
+      <!-- Message 1: User -->
+      <div class="message user">
+        <div class="meta">
+          <span class="role user-role"><i class="ri-user-line"></i> 用户</span>
+          <span class="time">14:32</span>
+        </div>
+        <div class="content">帮我给 API 层添加统一的错误处理</div>
+      </div>
+
+      <!-- Message 2: AI - Thinking Block -->
+      <div class="message ai">
+        <div class="meta">
+          <span class="role ai-role"><i class="ri-robot-line"></i> AI</span>
+          <span class="time">14:32</span>
+        </div>
+
+        <div class="thinking-block" style="margin-top: 4px;">
+          <div class="header">
+            <div class="label">
+              <span class="icon"><i class="ri-arrow-right-s-line"></i></span>
+              <span style="color:var(--purple);">思考过程</span>
+            </div>
+            <span class="toggle">已折叠</span>
+          </div>
+          <div class="body" style="display:block;">
+            <div class="line done">
+              <span class="check">✓</span>
+              <span class="desc">读取项目文件列表...</span>
+            </div>
+            <div class="line done">
+              <span class="check">✓</span>
+              <span class="desc">检测到框架: FastAPI + Pydantic</span>
+            </div>
+            <div class="line done">
+              <span class="check">✓</span>
+              <span class="desc">已定位关键文件: <span style="color:var(--cyan);">src/api/v1/users.py</span></span>
+            </div>
+            <div class="line done">
+              <span class="check">✓</span>
+              <span class="desc">已定位关键文件: <span style="color:var(--cyan);">src/api/v1/products.py</span></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tool: read_file (done) -->
+        <div class="tool-card done">
+          <div class="header">
+            <div class="left">
+              <span class="tool-icon">R</span>
+              <span class="tool-name" style="color:var(--pink);">read_file</span>
+            </div>
+            <div class="right">
+              <span class="status"><i class="ri-check-line"></i> 342ms · 124 lines</span>
+            </div>
+          </div>
+          <div class="body">
+            <div class="param"><span class="key">path</span><span class="value">src/api/v1/users.py</span></div>
+          </div>
+        </div>
+
+        <!-- Tool: read_file (done) -->
+        <div class="tool-card done">
+          <div class="header">
+            <div class="left">
+              <span class="tool-icon">R</span>
+              <span class="tool-name" style="color:var(--pink);">read_file</span>
+            </div>
+            <div class="right">
+              <span class="status"><i class="ri-check-line"></i> 156ms · 89 lines</span>
+            </div>
+          </div>
+          <div class="body">
+            <div class="param"><span class="key">path</span><span class="value">src/api/v1/products.py</span></div>
+          </div>
+        </div>
+
+        <!-- Tool: edit_file (running) -->
+        <div class="tool-card running">
+          <div class="header">
+            <div class="left">
+              <span class="tool-icon">E</span>
+              <span class="tool-name" style="color:var(--pink);">edit_file</span>
+            </div>
+            <div class="right">
+              <span class="status"><span class="spinner">⠋</span> 执行中...</span>
+            </div>
+          </div>
+          <div class="body">
+            <div class="param"><span class="key">path</span><span class="value">src/api/v1/users.py</span></div>
+            <div class="param"><span class="key">search</span><span class="value" style="color:var(--text-secondary);">def get_users():</span></div>
+            <div class="progress-bar">
+              <div class="track"><div class="fill" style="width:60%"></div></div>
+              <span class="pct">60%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI response -->
+        <div class="content" style="margin-top: 8px;">
+          <div>已完成错误处理框架添加，以下是修改摘要：</div>
+        </div>
+
+        <!-- Diff block -->
+        <div class="diff-block">
+          <div class="diff-header">
+            <span>src/api/v1/users.py</span>
+            <span class="stats">-9 +13</span>
+          </div>
+          <div class="diff-body">
+            <div class="line ctx"><span class="ln">22</span><span>def get_users():</span></div>
+            <div class="line add"><span class="ln">  </span><span>+    try:</span></div>
+            <div class="line add"><span class="ln">  </span><span>+        result = db.session.query(User).all()</span></div>
+            <div class="line add"><span class="ln">  </span><span>+        return {"data": [u.to_dict() for u in result]}</span></div>
+            <div class="line add"><span class="ln">  </span><span>+    except SQLAlchemyError as e:</span></div>
+            <div class="line add"><span class="ln">  </span><span>+        raise HTTPException(status_code=500, detail=str(e))</span></div>
+            <div class="line ctx"><span class="ln">28</span><span>    return users</span></div>
+          </div>
+        </div>
+
+        <div class="content" style="margin-top: 4px;">
+          <i class="ri-checkbox-circle-line"></i> 已为 <span class="highlight">users.py</span> 和 <span class="highlight">products.py</span> 添加统一错误处理
+        </div>
+      </div>
+    </div>
+
+    <!-- Input Area -->
+    <div class="input-area">
+      <span class="prompt">&gt;</span>
+      <input class="input-field" type="text" placeholder="输入消息..." disabled>
+      <span class="hint">Tab: 切换模式  |  /help</span>
+    </div>
+  </div>
+
+  <!-- ==================== SCENE 3: STREAMING ==================== -->
+  <div class="scene" id="scene-streaming">
+    <div class="status-bar">
+      <div class="left">
+        <span>Code Agent CLI v0.1.0</span>
+        <span class="mode">Auto</span>
+        <span class="model">Qwen-Plus</span>
+      </div>
+      <div class="right">
+        <span class="tokens">IN:8.7K</span>
+        <span class="tokens">OUT:3.2K</span>
+        <span class="badge purple">AI 思考中</span>
+      </div>
+    </div>
+
+    <div class="viewport" style="padding: 20px;">
+      <div class="message user">
+        <div class="meta">
+          <span class="role user-role"><i class="ri-user-line"></i> 用户</span>
+          <span class="time">14:35</span>
+        </div>
+        <div class="content">分析项目中的性能瓶颈，并给出优化建议</div>
+      </div>
+
+      <div class="message ai">
+        <div class="meta">
+          <span class="role ai-role"><i class="ri-robot-line"></i> AI</span>
+          <span class="time">14:35</span>
+        </div>
+
+        <!-- Active thinking with rainbow shimmer -->
+        <div class="thinking-block" style="border-color: var(--purple);">
+          <div class="header" style="background: rgba(167,139,250,0.08);">
+            <div class="label">
+              <span class="icon"><i class="ri-arrow-right-s-line"></i></span>
+              <span class="rainbow-text"><i class="ri-brain-line"></i> AI 正在思考...</span>
+            </div>
+            <span class="toggle" style="color:var(--purple);">展开中</span>
+          </div>
+          <div class="body">
+            <div class="line done">
+              <span class="check">✓</span>
+              <span class="desc">读取项目配置和依赖...</span>
+            </div>
+            <div class="line done">
+              <span class="check">✓</span>
+              <span class="desc">检测框架: FastAPI + SQLAlchemy + PostgreSQL</span>
+            </div>
+            <div class="line done">
+              <span class="check">✓</span>
+              <span class="desc">扫描路由定义: <span style="color:var(--cyan);">24 endpoints</span></span>
+            </div>
+            <div class="line done">
+              <span class="check">✓</span>
+              <span class="desc">检测数据库查询模式...</span>
+            </div>
+            <div class="line active">
+              <span class="spinner" style="color:var(--purple);">⠋</span>
+              <span class="desc rainbow-text">分析 N+1 查询问题...</span>
+            </div>
+            <div class="line active" style="opacity:0.6;">
+              <span class="spinner" style="color:var(--purple);">⠙</span>
+              <span class="desc" style="color:var(--text-muted);">检查索引使用情况...</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tool call streaming in -->
+        <div class="tool-card running">
+          <div class="header">
+            <div class="left">
+              <span class="tool-icon">G</span>
+              <span class="tool-name" style="color:var(--pink);">grep_search</span>
+            </div>
+            <div class="right">
+              <span class="status"><span class="spinner">⠋</span> 搜索中...</span>
+            </div>
+          </div>
+          <div class="body">
+            <div class="param"><span class="key">pattern</span><span class="value">\.all\(\)|\.first\(\)</span></div>
+            <div class="param"><span class="key">include</span><span class="value">src/**/*.py</span></div>
+          </div>
+        </div>
+
+        <div class="tool-card pending">
+          <div class="header">
+            <div class="left">
+              <span class="tool-icon">R</span>
+              <span class="tool-name" style="color:var(--pink);">read_file</span>
+            </div>
+            <div class="right">
+              <span class="status"><i class="ri-hourglass-line"></i> 排队中</span>
+            </div>
+          </div>
+          <div class="body">
+            <div class="param"><span class="key">path</span><span class="value" style="color:var(--text-muted);">src/models/user.py</span></div>
+          </div>
+        </div>
+
+        <!-- Streaming text output -->
+        <div class="content" style="margin-top: 8px;">
+          <span class="rainbow-text">分析完成，发现以下性能瓶颈：</span>
+          <div style="color:var(--text); margin-top: 6px;">
+            1. <span class="keyword">N+1 查询</span> - 在 <span class="highlight">users.py:45</span> 中循环查询关联表
+          </div>
+          <div style="color:var(--text);">
+            2. <span class="keyword">缺少索引</span> - <span class="highlight">orders.created_at</span> 未加索引
+          </div>
+          <div style="color:var(--text);">
+            3. <span class="keyword">大结果集</span> - <span class="highlight">/api/products</span> 未分页<span class="cursor-blink" style="color:var(--cyan);">▌</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Input area frozen -->
+    <div class="input-area" style="opacity:0.5;">
+      <span class="prompt">&gt;</span>
+      <input class="input-field" type="text" placeholder="AI 正在处理，输入暂时冻结..." disabled>
+      <span class="hint">ESC 中断当前输出</span>
+    </div>
+
+    <div class="footer-bar" style="border-top: 1px solid var(--border);">
+      <div class="tips">
+        <span class="tip-icon"><i class="ri-lightbulb-line"></i></span>
+        <span>按 <kbd><span class="key">ESC</span></kbd> 中断 AI 输出</span>
+      </div>
+      <div class="shortcuts">
+        <kbd><span class="key">Ctrl+C</span> 取消</kbd>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== SCENE 4: TOOL CALLS ==================== -->
+  <div class="scene" id="scene-tools">
+    <div class="status-bar">
+      <div class="left">
+        <span>Code Agent CLI v0.1.0</span>
+        <span class="mode">Auto</span>
+        <span class="model">DeepSeek-Coder</span>
+      </div>
+      <div class="right">
+        <span class="tokens">IN:15.3K</span>
+        <span class="tokens">OUT:4.8K</span>
+      </div>
+    </div>
+
+    <div class="viewport" style="padding: 20px;">
+      <div class="message user">
+        <div class="meta">
+          <span class="role user-role"><i class="ri-user-line"></i> 用户</span>
+          <span class="time">14:38</span>
+        </div>
+        <div class="content">把项目中所有 <span class="highlight">var</span> 改为 <span class="highlight">const/let</span>，确保语义正确</div>
+      </div>
+
+      <div class="message ai">
+        <div class="meta">
+          <span class="role ai-role"><i class="ri-robot-line"></i> AI</span>
+          <span class="time">14:38</span>
+        </div>
+
+        <!-- Multi-tool execution batch -->
+        <div class="tool-card done">
+          <div class="header">
+            <div class="left">
+              <span class="tool-icon">G</span>
+              <span class="tool-name" style="color:var(--pink);">grep_search</span>
+            </div>
+            <div class="right">
+              <span class="status"><i class="ri-check-line"></i> 856ms · 12 matches</span>
+            </div>
+          </div>
+          <div class="body">
+            <div class="param"><span class="key">pattern</span><span class="value">\bvar\b</span></div>
+            <div class="param"><span class="key">include</span><span class="value">src/**/*.js</span></div>
+          </div>
+        </div>
+
+        <div class="tool-card done">
+          <div class="header">
+            <div class="left">
+              <span class="tool-icon">R</span>
+              <span class="tool-name" style="color:var(--pink);">read_file</span>
+            </div>
+            <div class="right">
+              <span class="status"><i class="ri-check-line"></i> 234ms · 2 files</span>
+            </div>
+          </div>
+          <div class="body">
+            <div class="param"><span class="key">path</span><span class="value">src/utils/helpers.js</span></div>
+          </div>
+        </div>
+
+        <div class="tool-card done">
+          <div class="header">
+            <div class="left">
+              <span class="tool-icon">E</span>
+              <span class="tool-name" style="color:var(--pink);">edit_file</span>
+            </div>
+            <div class="right">
+              <span class="status"><i class="ri-check-line"></i> 120ms</span>
+            </div>
+          </div>
+          <div class="body">
+            <div class="param"><span class="key">path</span><span class="value">src/utils/helpers.js</span></div>
+            <div class="param"><span class="key">result</span><span class="value" style="color:var(--success);">5 replacements</span></div>
+          </div>
+        </div>
+
+        <div class="tool-card done">
+          <div class="header">
+            <div class="left">
+              <span class="tool-icon">E</span>
+              <span class="tool-name" style="color:var(--pink);">edit_file</span>
+            </div>
+            <div class="right">
+              <span class="status"><i class="ri-check-line"></i> 98ms</span>
+            </div>
+          </div>
+          <div class="body">
+            <div class="param"><span class="key">path</span><span class="value">src/components/Header.jsx</span></div>
+            <div class="param"><span class="key">result</span><span class="value" style="color:var(--success);">3 replacements</span></div>
+          </div>
+        </div>
+
+        <div class="tool-card error">
+          <div class="header">
+            <div class="left">
+              <span class="tool-icon">W</span>
+              <span class="tool-name" style="color:var(--pink);">write_file</span>
+            </div>
+            <div class="right">
+              <span class="status">✗ 权限被拒绝</span>
+            </div>
+          </div>
+          <div class="body">
+            <div class="param"><span class="key">path</span><span class="value">node_modules/package.js</span></div>
+            <div class="param"><span class="key">error</span><span class="value" style="color:var(--red);">无法修改 node_modules 中的文件</span></div>
+          </div>
+        </div>
+
+        <div class="content" style="margin-top: 6px;">
+          <i class="ri-checkbox-circle-line"></i> 已修改 <span style="color:var(--success);">4 个文件</span>，共 <span style="color:var(--success);">12 处</span> var→const/let 替换
+          <div style="color:var(--text-secondary);margin-top:4px;font-size:12px;">
+            跳过 <span class="warn">1 处</span>（node_modules 中的第三方代码）
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <span class="prompt">&gt;</span>
+      <input class="input-field" type="text" placeholder="继续追问，或输入新任务..." disabled>
+      <span class="hint">↑↓ 历史  |  /help</span>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Tab switching
+  document.querySelectorAll('.tab-bar .tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelectorAll('.scene').forEach(s => s.classList.remove('active'));
+      document.getElementById('scene-' + tab.dataset.scene).classList.add('active');
+    });
+  });
+</script>
+
+</body>
+</html>

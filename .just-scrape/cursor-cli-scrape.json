@@ -1,0 +1,15 @@
+npm warn exec The following package was not found and will be installed: just-scrape@1.1.0
+npm warn EBADENGINE Unsupported engine {
+npm warn EBADENGINE   package: 'just-scrape@1.1.0',
+npm warn EBADENGINE   required: { node: '>=22' },
+npm warn EBADENGINE   current: { node: 'v20.18.0', npm: '10.8.2' }
+npm warn EBADENGINE }
+npm warn EBADENGINE Unsupported engine {
+npm warn EBADENGINE   package: 'scrapegraph-js@2.2.0',
+npm warn EBADENGINE   required: { node: '>=22' },
+npm warn EBADENGINE   current: { node: 'v20.18.0', npm: '10.8.2' }
+npm warn EBADENGINE }
+[?25l[90m│[39m
+[36m◆[39m  Enter your ScrapeGraph API key (get one at https://dashboard.scrapegraphai.com):
+[36m│[39m  [7ms[27m[2mgai-...[22m
+[36m└[39m

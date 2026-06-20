@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Code Agent CLI - 系统功能原型</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.1.0/fonts/remixicon.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #000000;
+      --bg-panel: #0D0D0D;
+      --bg-hover: #1A1A1A;
+      --bg-surface: #262626;
+      --bg-surface-dim: #1A1A1A;
+      --text: #FFFFFF;
+      --text-secondary: #9CA3AF;
+      --text-muted: #4B5563;
+      --blue: #60A5FA;
+      --purple: #A78BFA;
+      --cyan: #67E8F9;
+      --orange: #FBBF24;
+      --red: #F87171;
+      --pink: #F472B6;
+      --border: #262626;
+      --success: #34D399;
+    }
+
+    body {
+      background: #111;
+      font-family: 'JetBrains Mono', 'Courier New', monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px;
+      min-height: 100vh;
+    }
+
+    .page-header {
+      width: 100%;
+      max-width: 900px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding: 8px 0;
+    }
+    .page-header h1 { color: var(--text); font-size: 13px; font-weight: 400; }
+    .page-header .nav a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 12px;
+      margin-left: 16px;
+      transition: color 0.15s;
+    }
+    .page-header .nav a:hover, .page-header .nav a.active { color: var(--blue); }
+
+    .terminal {
+      width: 100%;
+      max-width: 900px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      box-shadow: 0 4px 32px rgba(0,0,0,0.6);
+    }
+
+    .tab-bar {
+      display: flex;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+    }
+    .tab-bar .tab {
+      padding: 10px 20px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+      white-space: nowrap;
+      font-family: inherit;
+      background: none;
+      border-top: none;
+      border-left: none;
+      border-right: none;
+      user-select: none;
+    }
+    .tab-bar .tab:hover { color: var(--text); background: var(--bg-hover); }
+    .tab-bar .tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+    .scene { display: none; animation: fadeIn 0.25s ease; }
+    .scene.active { display: block; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+    .viewport { padding: 20px; min-height: 480px; }
+
+    /* ===== WIZARD ===== */
+    .wizard-container {
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    .wizard-title {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    .wizard-title .main {
+      font-size: 20px;
+      color: var(--text);
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+    .wizard-title .sub {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    .wizard-title .border-line {
+      color: var(--text-muted);
+      font-size: 12px;
+      margin-top: 8px;
+    }
+    .wizard-section {
+      margin-bottom: 20px;
+    }
+    .wizard-section .section-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 10px;
+    }
+    .wizard-option {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      margin-bottom: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .wizard-option:hover {
+      border-color: var(--text-muted);
+      background: var(--bg-hover);
+    }
+    .wizard-option.selected {
+      border-color: var(--blue);
+      background: rgba(96,165,250,0.08);
+    }
+    .wizard-option .radio {
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      border: 2px solid var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: all 0.15s;
+    }
+    .wizard-option.selected .radio {
+      border-color: var(--blue);
+    }
+    .wizard-option.selected .radio .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--blue);
+    }
+    .wizard-option .info { flex: 1; }
+    .wizard-option .info .name {
+      font-size: 13px;
+      color: var(--text);
+    }
+    .wizard-option .info .hint {
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+    .wizard-option .badge {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 3px;
+      background: rgba(251,191,36,0.15);
+      color: var(--orange);
+    }
+
+    .wizard-input-group {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .wizard-input-group:focus-within {
+      border-color: var(--blue);
+    }
+    .wizard-input-group .prefix {
+      padding: 10px 12px;
+      font-size: 12px;
+      color: var(--text-muted);
+      background: var(--bg-surface-dim);
+      border-right: 1px solid var(--border);
+    }
+    .wizard-input-group input {
+      flex: 1;
+      padding: 10px 12px;
+      background: none;
+      border: none;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+      caret-color: var(--text);
+    }
+    .wizard-note {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 6px;
+      padding: 6px 10px;
+      background: rgba(96,165,250,0.08);
+      border-radius: 3px;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .wizard-footer {
+      display: flex;
+      justify-content: center;
+      margin-top: 24px;
+    }
+    .wizard-btn {
+      padding: 10px 32px;
+      border: none;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .wizard-btn.primary {
+      background: var(--blue);
+      color: #000;
+    }
+    .wizard-btn.primary:hover {
+      background: #7AB8FF;
+    }
+
+    /* ===== PERMISSION DIALOG ===== */
+    .dialog-overlay {
+      background: rgba(0,0,0,0.7);
+      position: relative;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 300px;
+    }
+    .dialog-box {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      width: 100%;
+      max-width: 420px;
+      overflow: hidden;
+    }
+    .dialog-box.danger {
+      border-color: var(--red);
+    }
+    .dialog-box .dialog-header {
+      padding: 12px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .dialog-box.danger .dialog-header {
+      color: var(--red);
+      background: rgba(248,113,113,0.08);
+    }
+    .dialog-box .dialog-body {
+      padding: 16px;
+    }
+    .dialog-box .dialog-body .field {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 12px;
+    }
+    .dialog-box .dialog-body .field .key {
+      color: var(--text-muted);
+      min-width: 60px;
+    }
+    .dialog-box .dialog-body .field .val {
+      color: var(--text);
+    }
+    .dialog-box .dialog-body .field .val.danger-path {
+      color: var(--red);
+    }
+    .dialog-box .dialog-body .sensitive-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      background: rgba(248,113,113,0.15);
+      color: var(--red);
+      border-radius: 3px;
+      font-size: 10px;
+      margin-top: 4px;
+    }
+    .dialog-box .dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+    }
+    .dialog-btn {
+      padding: 6px 16px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      background: var(--bg-surface);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .dialog-btn:hover { background: var(--bg-hover); }
+    .dialog-btn.danger {
+      background: var(--red);
+      border-color: var(--red);
+      color: #000;
+      font-weight: 500;
+    }
+    .dialog-btn.danger:hover { background: #FF8A8A; }
+    .dialog-btn.secondary { color: var(--text-secondary); }
+    .dialog-hint {
+      padding: 8px 16px;
+      font-size: 10px;
+      color: var(--text-muted);
+      text-align: center;
+      border-top: 1px solid var(--border);
+    }
+
+    /* ===== COST ===== */
+    .cost-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+    .cost-card .card-title {
+      font-size: 12px;
+      font-weight: 500;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .cost-card .card-title .icon { font-size: 14px; }
+    .cost-summary {
+      display: flex;
+      gap: 24px;
+      margin-bottom: 12px;
+    }
+    .cost-summary .item { display: flex; flex-direction: column; }
+    .cost-summary .item .num {
+      font-size: 18px;
+      font-weight: 500;
+      color: var(--text);
+    }
+    .cost-summary .item .num.cyan { color: var(--cyan); }
+    .cost-summary .item .num.orange { color: var(--orange); }
+    .cost-summary .item .lbl {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .cost-table { width: 100%; font-size: 12px; border-collapse: collapse; }
+    .cost-table th {
+      text-align: left;
+      color: var(--text-muted);
+      font-weight: 400;
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+    }
+    .cost-table td {
+      padding: 6px 8px;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border);
+    }
+    .cost-table tr:last-child td { border-bottom: none; }
+    .cost-table .bar-cell { width: 100px; }
+    .cost-table .bar-track {
+      height: 6px;
+      background: var(--bg-surface);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .cost-table .bar-track .fill {
+      height: 100%;
+      border-radius: 3px;
+    }
+    .cost-table .bar-track .fill.blue-fill { background: var(--blue); }
+    .cost-table .bar-track .fill.purple-fill { background: var(--purple); }
+
+    .monthly-progress {
+      margin-top: 12px;
+    }
+    .monthly-progress .header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+    .monthly-progress .header .left { color: var(--text-secondary); }
+    .monthly-progress .header .right { color: var(--orange); }
+    .monthly-progress .big-track {
+      height: 8px;
+      background: var(--bg-surface);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .monthly-progress .big-track .fill {
+      height: 100%;
+      border-radius: 4px;
+      background: linear-gradient(90deg, var(--blue), var(--purple));
+      transition: width 0.5s ease;
+    }
+    .monthly-progress .suggest {
+      margin-top: 8px;
+      padding: 8px 12px;
+      background: rgba(251,191,36,0.08);
+      border: 1px solid rgba(251,191,36,0.15);
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--orange);
+    }
+
+    /* ===== COMMAND PALETTE ===== */
+    .palette-overlay {
+      background: rgba(0,0,0,0.6);
+      position: relative;
+      border-radius: 4px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px;
+      min-height: 300px;
+    }
+    .palette-search {
+      width: 100%;
+      max-width: 480px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+    .palette-search input {
+      width: 100%;
+      padding: 12px 14px;
+      background: none;
+      border: none;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 14px;
+      outline: none;
+    }
+    .palette-search input::placeholder { color: var(--text-muted); }
+    .palette-list {
+      width: 100%;
+      max-width: 480px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .palette-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      cursor: pointer;
+      transition: all 0.1s;
+      font-size: 13px;
+    }
+    .palette-item:not(:last-child) {
+      border-bottom: 1px solid var(--border);
+    }
+    .palette-item:hover {
+      background: var(--bg-hover);
+    }
+    .palette-item.selected {
+      background: rgba(96,165,250,0.12);
+      border-left: 2px solid var(--blue);
+    }
+    .palette-item .left { display: flex; align-items: center; gap: 10px; }
+    .palette-item .left .cmd { color: var(--text); }
+    .palette-item .left .desc { color: var(--text-secondary); font-size: 11px; }
+    .palette-item .right { display: flex; gap: 6px; }
+    .palette-item .right kbd {
+      padding: 1px 6px;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      font-size: 10px;
+      color: var(--text-muted);
+      font-family: inherit;
+    }
+    .palette-category {
+      padding: 6px 14px;
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      background: var(--bg-surface-dim);
+      border-bottom: 1px solid var(--border);
+    }
+    .palette-hint {
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .separator {
+      border: none;
+      border-top: 1px dashed var(--border);
+      margin: 16px 0;
+    }
+  </style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>Code Agent CLI — 原型 03：系统功能</h1>
+  <div class="nav">
+    <a href="prototype-01-core.html">01 核心对话</a>
+    <a href="prototype-02-modes.html">02 模式设计</a>
+    <a href="prototype-03-system.html" class="active">03 系统功能</a>
+    <a href="prototype-04-workspace.html">04 工作区</a>
+  </div>
+</div>
+
+<div class="terminal">
+  <div class="tab-bar">
+    <button class="tab active" data-scene="wizard"><i class="ri-settings-3-line"></i> 配置向导</button>
+    <button class="tab" data-scene="permission"><i class="ri-lock-line"></i> 权限弹窗</button>
+    <button class="tab" data-scene="cost"><i class="ri-coins-line"></i> 成本管家</button>
+    <button class="tab" data-scene="palette"><i class="ri-keyboard-line"></i> 命令面板</button>
+  </div>
+
+  <!-- ==================== WIZARD ==================== -->
+  <div class="scene active" id="scene-wizard">
+    <div class="viewport">
+      <div class="wizard-container">
+        <div class="wizard-title">
+          <div class="border-line">╭──────────────────────────╮</div>
+          <div class="main">Code Agent — 配置向导</div>
+          <div class="sub">1 分钟上手，开始编码智能体之旅</div>
+          <div class="border-line">╰──────────────────────────╯</div>
+        </div>
+
+        <div class="wizard-section">
+          <div class="section-label">选择模型厂商</div>
+          <div class="wizard-option selected">
+            <div class="radio"><div class="dot"></div></div>
+            <div class="info">
+              <div class="name">DeepSeek <span class="badge">推荐</span></div>
+              <div class="hint">代码能力强，性价比高</div>
+            </div>
+          </div>
+          <div class="wizard-option">
+            <div class="radio"></div>
+            <div class="info">
+              <div class="name">阿里 Qwen</div>
+              <div class="hint">通义千问，推理能力强</div>
+            </div>
+          </div>
+          <div class="wizard-option">
+            <div class="radio"></div>
+            <div class="info">
+              <div class="name">智谱 GLM</div>
+              <div class="hint">CodeGeeX 代码模型</div>
+            </div>
+          </div>
+          <div class="wizard-option">
+            <div class="radio"></div>
+            <div class="info">
+              <div class="name">Ollama (本地)</div>
+              <div class="hint">数据不出本机，免费使用</div>
+            </div>
+          </div>
+          <div class="wizard-option">
+            <div class="radio"></div>
+            <div class="info">
+              <div class="name">手动配置</div>
+              <div class="hint">自定义 API 地址和模型</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="wizard-section">
+          <div class="section-label">API Key</div>
+          <div class="wizard-input-group">
+            <span class="prefix">sk-</span>
+            <input type="password" value="************************************************" disabled>
+          </div>
+          <div class="wizard-note">
+            <span><i class="ri-lock-line"></i></span>
+            <span>不会明文存储，支持环境变量引用（$DEEPSEEK_API_KEY）</span>
+          </div>
+        </div>
+
+        <div class="wizard-section">
+          <div class="section-label">默认对话模式</div>
+          <div class="wizard-option selected">
+            <div class="radio"><div class="dot"></div></div>
+            <div class="info">
+              <div class="name">Normal <span class="badge" style="background:rgba(96,165,250,0.15);color:var(--blue);">推荐</span></div>
+              <div class="hint">标准对话，按需调用工具</div>
+            </div>
+          </div>
+          <div class="wizard-option">
+            <div class="radio"></div>
+            <div class="info">
+              <div class="name">Auto</div>
+              <div class="hint">AI 自主规划执行</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="wizard-footer">
+          <button class="wizard-btn primary"><i class="ri-checkbox-circle-line"></i> 完成配置</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== PERMISSION DIALOG ==================== -->
+  <div class="scene" id="scene-permission">
+    <div class="viewport">
+      <div style="margin-bottom:16px;">
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">
+          工具执行前根据安全策略展示确认弹窗，Y/n 单键快速响应：
+        </div>
+      </div>
+
+      <!-- Dialog 1: File delete (danger) -->
+      <div class="dialog-overlay" style="min-height:auto;margin-bottom:16px;">
+        <div class="dialog-box danger">
+          <div class="dialog-header">
+            <span><i class="ri-alert-line"></i></span>
+            <span>确认操作 — 删除文件</span>
+          </div>
+          <div class="dialog-body">
+            <div class="field">
+              <span class="key">路径</span>
+              <span class="val danger-path">.env.local</span>
+            </div>
+            <div class="field">
+              <span class="key">大小</span>
+              <span class="val">256 B</span>
+            </div>
+            <div class="field">
+              <span class="key">修改</span>
+              <span class="val">今天 14:20</span>
+            </div>
+            <div class="sensitive-tag"><i class="ri-shield-keyhole-line"></i> 敏感文件 — 包含环境变量</div>
+          </div>
+          <div class="dialog-actions">
+            <button class="dialog-btn secondary">[n] 取消</button>
+            <button class="dialog-btn danger">[Y] 确认删除</button>
+          </div>
+          <div class="dialog-hint"><span style="color:var(--orange);"><i class="ri-alert-line"></i></span> 此操作不可撤销</div>
+        </div>
+      </div>
+
+      <!-- Dialog 2: File edit (normal) -->
+      <div class="dialog-overlay" style="min-height:auto;">
+        <div class="dialog-box">
+          <div class="dialog-header">
+            <span><i class="ri-file-edit-line"></i></span>
+            <span>确认编辑</span>
+          </div>
+          <div class="dialog-body">
+            <div class="field">
+              <span class="key">工具</span>
+              <span class="val" style="color:var(--pink);">edit_file</span>
+            </div>
+            <div class="field">
+              <span class="key">路径</span>
+              <span class="val" style="color:var(--cyan);">src/app.js</span>
+            </div>
+            <div class="field">
+              <span class="key">操作</span>
+              <span class="val">替换 3 处 console.log → logger.info</span>
+            </div>
+          </div>
+          <div class="dialog-actions">
+            <button class="dialog-btn secondary">[n] 取消</button>
+            <button class="dialog-btn">[Y] 确认</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== COST ==================== -->
+  <div class="scene" id="scene-cost">
+    <div class="viewport">
+      <!-- Current session cost -->
+      <div class="cost-card" style="border-color:var(--blue);">
+        <div class="card-title">
+          <span class="icon"><i class="ri-bar-chart-box-line"></i></span>
+          <span style="color:var(--blue);">本次会话费用</span>
+        </div>
+        <div class="cost-summary">
+          <div class="item">
+            <span class="num cyan">15.6K</span>
+            <span class="lbl">总 Token</span>
+          </div>
+          <div class="item">
+            <span class="num orange">¥0.32</span>
+            <span class="lbl">估算费用</span>
+          </div>
+          <div class="item">
+            <span class="num">3</span>
+            <span class="lbl">模型切换</span>
+          </div>
+        </div>
+        <table class="cost-table">
+          <thead>
+            <tr><th>模型</th><th>Token</th><th>费用</th><th>占比</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="color:var(--cyan);">DeepSeek-Coder</td>
+              <td>8.2K</td>
+              <td>¥0.12</td>
+              <td class="bar-cell">
+                <div class="bar-track"><div class="fill blue-fill" style="width:37%"></div></div>
+              </td>
+            </tr>
+            <tr>
+              <td style="color:var(--purple);">Qwen-Plus</td>
+              <td>7.4K</td>
+              <td>¥0.20</td>
+              <td class="bar-cell">
+                <div class="bar-track"><div class="fill purple-fill" style="width:63%"></div></div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Monthly stats -->
+      <div class="cost-card">
+        <div class="card-title">
+          <span class="icon"><i class="ri-line-chart-line"></i></span>
+          <span>月度统计</span>
+        </div>
+
+        <div class="monthly-progress">
+          <div class="header">
+            <span class="left">本月已用</span>
+            <span class="right">¥4.20 / ¥10.00</span>
+          </div>
+          <div class="big-track">
+            <div class="fill" style="width:42%"></div>
+          </div>
+
+          <div class="suggest">
+            <i class="ri-lightbulb-line"></i> <strong>建议：</strong>将简单问答切换为 <span style="color:var(--cyan);">DeepSeek-Chat</span>，预计每月节省 ¥3-5
+          </div>
+        </div>
+      </div>
+
+      <!-- Historical -->
+      <div class="cost-card">
+        <div class="card-title">
+          <span class="icon"><i class="ri-calendar-line"></i></span>
+          <span>近 7 天趋势</span>
+        </div>
+        <div style="display:flex;gap:4px;align-items:flex-end;height:60px;padding:8px 0;">
+          <div style="flex:1;height:24px;background:var(--bg-surface);border-radius:2px;"></div>
+          <div style="flex:1;height:36px;background:var(--bg-surface);border-radius:2px;"></div>
+          <div style="flex:1;height:18px;background:var(--bg-surface);border-radius:2px;"></div>
+          <div style="flex:1;height:42px;background:var(--bg-surface);border-radius:2px;"></div>
+          <div style="flex:1;height:30px;background:var(--bg-surface);border-radius:2px;"></div>
+          <div style="flex:1;height:52px;background:linear-gradient(to top,var(--blue),var(--purple));border-radius:2px;"></div>
+          <div style="flex:1;height:20px;background:var(--bg-surface);border-radius:2px;"></div>
+        </div>
+        <div style="display:flex;gap:4px;font-size:9px;color:var(--text-muted);">
+          <span style="flex:1;text-align:center">一</span>
+          <span style="flex:1;text-align:center">二</span>
+          <span style="flex:1;text-align:center">三</span>
+          <span style="flex:1;text-align:center">四</span>
+          <span style="flex:1;text-align:center">五</span>
+          <span style="flex:1;text-align:center;color:var(--blue);">六</span>
+          <span style="flex:1;text-align:center">日</span>
+        </div>
+      </div>
+
+      <div style="font-size:11px;color:var(--text-muted);text-align:center;padding:8px;">
+        运行 <span style="color:var(--cyan);">/cost</span> 查看详细账单 · 设置 <span style="color:var(--cyan);">costGuard.monthlyBudget</span> 配置月预算上限
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== COMMAND PALETTE ==================== -->
+  <div class="scene" id="scene-palette">
+    <div class="viewport">
+      <div style="margin-bottom:12px;">
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;">
+          按 <span style="padding:1px 5px;border:1px solid var(--border);border-radius:2px;font-size:11px;color:var(--text);">Ctrl+P</span> 打开命令面板，快速执行操作：
+        </div>
+      </div>
+
+      <div class="palette-overlay" style="min-height:auto;padding:0;">
+        <div class="palette-search">
+          <input type="text" placeholder="搜索命令..." value="/mode" disabled>
+        </div>
+        <div class="palette-list">
+          <div class="palette-category">对话命令</div>
+
+          <div class="palette-item selected">
+            <div class="left">
+              <span class="cmd">/mode</span>
+              <span class="desc">切换对话模式</span>
+            </div>
+            <div class="right"><kbd>Tab</kbd></div>
+          </div>
+
+          <div class="palette-item">
+            <div class="left">
+              <span class="cmd">/model</span>
+              <span class="desc">切换模型</span>
+            </div>
+            <div class="right"><kbd>M</kbd></div>
+          </div>
+
+          <div class="palette-item">
+            <div class="left">
+              <span class="cmd">/clear</span>
+              <span class="desc">清空当前对话</span>
+            </div>
+            <div class="right"><kbd>Ctrl+L</kbd></div>
+          </div>
+
+          <div class="palette-item">
+            <div class="left">
+              <span class="cmd">/help</span>
+              <span class="desc">查看帮助</span>
+            </div>
+            <div class="right"></div>
+          </div>
+
+          <div class="palette-category">任务管理</div>
+
+          <div class="palette-item">
+            <div class="left">
+              <span class="cmd">/goal</span>
+              <span class="desc">设置长期任务目标</span>
+            </div>
+            <div class="right"></div>
+          </div>
+
+          <div class="palette-item">
+            <div class="left">
+              <span class="cmd">/undo</span>
+              <span class="desc">撤销上一步操作</span>
+            </div>
+            <div class="right"><kbd>Ctrl+Z</kbd></div>
+          </div>
+
+          <div class="palette-item">
+            <div class="left">
+              <span class="cmd">/save</span>
+              <span class="desc">保存当前对话</span>
+            </div>
+            <div class="right"></div>
+          </div>
+
+          <div class="palette-category">信息查询</div>
+
+          <div class="palette-item">
+            <div class="left">
+              <span class="cmd">/usage</span>
+              <span class="desc">查看 Token 用量</span>
+            </div>
+            <div class="right"></div>
+          </div>
+
+          <div class="palette-item">
+            <div class="left">
+              <span class="cmd">/cost</span>
+              <span class="desc">查看 API 费用</span>
+            </div>
+            <div class="right"></div>
+          </div>
+
+          <div class="palette-item">
+            <div class="left">
+              <span class="cmd">/status</span>
+              <span class="desc">当前会话状态</span>
+            </div>
+            <div class="right"></div>
+          </div>
+        </div>
+        <div class="palette-hint">
+          ↑↓ 导航 · Enter 执行 · ESC 关闭
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll('.tab-bar .tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelectorAll('.scene').forEach(s => s.classList.remove('active'));
+      document.getElementById('scene-' + tab.dataset.scene).classList.add('active');
+    });
+  });
+</script>
+
+</body>
+</html>
