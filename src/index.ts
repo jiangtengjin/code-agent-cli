@@ -12,6 +12,19 @@
  */
 
 import { createProgram } from "./cli/commands.js";
+import { ConfigResolver } from "./config/resolver.js";
+import { startChat } from "./cli/chat.js";
 
-const program = createProgram();
-program.parse();
+// Subcommand routing: no args or unknown subcommand → chat REPL
+const args = process.argv.slice(2).filter((a) => !a.startsWith("-"));
+const knownCommands = ["init", "config"];
+
+if (args.length > 0 && knownCommands.includes(args[0])) {
+  const program = createProgram();
+  program.parse();
+} else {
+  const resolver = new ConfigResolver();
+  const cliOptions = createProgram().opts();
+  const config = await resolver.resolve(cliOptions);
+  await startChat(config);
+}
