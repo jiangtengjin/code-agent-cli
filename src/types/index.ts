@@ -1,0 +1,24 @@
+/**
+ * 类型统一导出
+ *
+ * 所有模块需要的类型都从这里导出，外部模块统一从 src/types 引用。
+ */
+
+export type {
+  Config,
+  LLMConfig,
+  MCPServerConfig,
+  RAGConfig,
+  TerminalConfig,
+  CostGuardConfig,
+} from "./config.js";
+export type { ChatMode } from "./mode.js";
+export type {
+  LLMMessage,
+  LLMToolCall,
+  LLMUsage,
+  LLMResponse,
+  LLMContentPart,
+} from "./provider.js";
+export type { ToolDefinition, ToolResult } from "./tool.js";
+export type { MCPToolDefinition, MCPCallToolResult } from "./mcp.js";
