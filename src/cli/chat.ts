@@ -5,6 +5,7 @@ import type { ChatMode } from '../types/mode.js'
 import type { LLMMessage } from '../types/provider.js'
 import type { LLMProvider } from '../llm/provider.js'
 import { createProviderFromConfig } from '../llm/registry.js'
+import { maskApiKey } from '../utils/api-key.js'
 
 function getPrompt(mode: ChatMode): string {
   return chalk.cyan(`${mode} > `)
@@ -16,8 +17,9 @@ ${chalk.cyan('╭─────────────────────
 ${chalk.cyan('│')}            ${chalk.bold('Code Agent CLI  v0.1.0')}             ${chalk.cyan('│')}
 ${chalk.cyan('│')}             ${chalk.gray('终端原生编码智能体')}                 ${chalk.cyan('│')}
 ${chalk.cyan('│')}                                              ${chalk.cyan('│')}
-${chalk.cyan('│')}  当前模型: ${chalk.green(provider.name)}/${chalk.green(config.model?.model ?? 'unknown')}
-${chalk.cyan('│')}  工作目录: ${chalk.green(process.cwd())}
+${chalk.cyan('│')}  模型: ${chalk.green(provider.name)}/${chalk.green(config.model?.model ?? 'unknown')}
+${chalk.cyan('│')}  API: ${chalk.green(maskApiKey(config.model?.apiKey ?? ''))}
+${chalk.cyan('│')}  目录: ${chalk.green(process.cwd())}
 ${chalk.cyan('│')}                                              ${chalk.cyan('│')}
 ${chalk.cyan('│')}  输入 ${chalk.yellow('/help')} 查看可用命令                     ${chalk.cyan('│')}
 ${chalk.cyan('╰──────────────────────────────────────────────╯')}
@@ -31,7 +33,6 @@ function handleSlashCommand(
     mode: ChatMode
     config: Config
     setMode: (m: ChatMode) => void
-    setModel: (m: string) => void
   },
 ): void {
   const parts = input.slice(1).split(/\s+/)
@@ -42,7 +43,7 @@ function handleSlashCommand(
     case 'help':
       console.log(`
 ${chalk.bold('可用命令:')}
-  ${chalk.yellow('/model <name>')}   切换模型
+  ${chalk.yellow('/model')}          查看当前模型
   ${chalk.yellow('/mode <mode>')}    切换模式 (normal/auto/plan/edit)
   ${chalk.yellow('/clear')}          清空对话历史
   ${chalk.yellow('/help')}           显示此帮助
@@ -51,12 +52,7 @@ ${chalk.bold('可用命令:')}
       break
 
     case 'model':
-      if (args[0]) {
-        ctx.setModel(args[0])
-        console.log(chalk.green(`切换到模型: ${args[0]}`))
-      } else {
-        console.log(chalk.yellow(`当前模型: ${ctx.config.model?.model ?? '未设置'}`))
-      }
+      console.log(chalk.yellow(`当前模型: ${ctx.config.model?.model ?? '未设置'}`))
       break
 
     case 'mode':
@@ -113,7 +109,6 @@ export async function startChat(config: Config): Promise<void> {
   const provider = createProviderFromConfig(config)
   const messages: LLMMessage[] = []
   let mode: ChatMode = (config.mode as ChatMode) ?? 'normal'
-  let currentModel = config.model.model
 
   displayWelcome(config, provider)
 
@@ -151,7 +146,6 @@ export async function startChat(config: Config): Promise<void> {
         mode,
         config,
         setMode: (m) => { mode = m; rl.setPrompt(getPrompt(m)); },
-        setModel: (m) => { currentModel = m; },
       })
       rl.prompt()
       return

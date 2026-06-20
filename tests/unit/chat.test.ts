@@ -101,7 +101,7 @@ describe('startChat', () => {
     logSpy.mockRestore()
   })
 
-  it('processes normal message through provider', async () => {
+  it('shows thinking message when user sends input', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const { startChat } = await import('../../src/cli/chat.js')
 

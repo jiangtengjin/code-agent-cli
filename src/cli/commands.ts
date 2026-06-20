@@ -36,10 +36,12 @@ export function createProgram(): Command {
       if (options.debug) {
         const { setDebug } = await import("../utils/logger.js");
         setDebug(true);
-        debug("调试模式已启用");
       }
-      console.log("Code Agent CLI v0.1.0");
-      console.log("输入 --help 查看帮助");
+      const { ConfigResolver } = await import("../config/resolver.js");
+      const { startChat } = await import("./chat.js");
+      const resolver = new ConfigResolver();
+      const config = await resolver.resolve(options);
+      await startChat(config);
     });
 
   // code-agent init — 配置向导
