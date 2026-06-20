@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { OpenAICompatibleProvider } from '../../../src/llm/adapters/openai-compat.js'
 
 const mockFetch = vi.fn()
+const originalFetch = globalThis.fetch
 
 describe('OpenAICompatibleProvider', () => {
   beforeEach(() => {
@@ -10,6 +11,7 @@ describe('OpenAICompatibleProvider', () => {
 
   afterEach(() => {
     vi.clearAllMocks()
+    globalThis.fetch = originalFetch
   })
 
   it('sends correct request format', async () => {
@@ -132,6 +134,6 @@ describe('createProviderFromConfig', () => {
     const { createProviderFromConfig } = await import('../../../src/llm/registry.js')
     expect(() => createProviderFromConfig({
       model: { provider: 'deepseek', model: 'test' },
-    })).toThrow('API Key')
+    })).toThrow('not configured')
   })
 })

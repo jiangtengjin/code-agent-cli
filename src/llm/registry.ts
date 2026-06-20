@@ -12,7 +12,7 @@ const ADAPTER_MAP: Record<string, string> = {
 
 export function createProviderFromConfig(config: Config): LLMProvider {
   if (!config.model?.apiKey || !config.model?.model) {
-    throw new Error('API Key 未配置，请运行 code-agent init')
+    throw new Error('API Key not configured, run code-agent init')
   }
 
   const adapterName = ADAPTER_MAP[config.model.provider] ?? 'openai-compatible'
@@ -26,5 +26,5 @@ export function createProviderFromConfig(config: Config): LLMProvider {
     })
   }
 
-  throw new Error(`不支持的 Provider: ${config.model.provider}`)
+  throw new Error(`Unsupported provider: ${config.model.provider}`)
 }
