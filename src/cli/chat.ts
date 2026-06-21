@@ -118,20 +118,29 @@ export async function startChat(config: Config): Promise<void> {
     prompt: getPrompt(mode),
   })
 
-  readline.emitKeypressEvents(process.stdin)
+  // Enable raw keypress events (must be after createInterface on Windows)
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(true)
   }
 
-  process.stdin.on('keypress', (_str: string, key: { sequence?: string; name?: string; ctrl?: boolean }) => {
-    if (key.sequence === '\x1b[Z') {
-      const modes: ChatMode[] = ['normal', 'auto', 'plan', 'edit']
-      const idx = modes.indexOf(mode)
-      mode = modes[(idx + 1) % modes.length]
-      rl.setPrompt(getPrompt(mode))
-      rl.prompt(true)
+  process.stdin.prependListener('keypress', (_str: string, key: { name?: string; ctrl?: boolean }) => {
+    if (key.name === 'tab' || (key.name === 't' && key.ctrl)) {
+      cycleMode()
+      // Readline also receives the tab and inserts \t into buffer.
+      // Clean it up immediately so it doesn't appear in the input.
+      if (key.name === 'tab') {
+        process.nextTick(() => rl.write(null, { name: 'backspace' }))
+      }
     }
   })
+
+  function cycleMode(): void {
+    const modes: ChatMode[] = ['normal', 'auto', 'plan', 'edit']
+    const idx = modes.indexOf(mode)
+    mode = modes[(idx + 1) % modes.length]
+    rl.setPrompt(getPrompt(mode))
+    rl.prompt(true)
+  }
 
   rl.on('line', async (input: string) => {
     const trimmed = input.trim()
