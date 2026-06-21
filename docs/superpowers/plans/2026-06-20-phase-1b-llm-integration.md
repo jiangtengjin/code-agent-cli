@@ -29,7 +29,7 @@
 - Consumes: nothing
 - Produces: `maskApiKey(key: string): string`, `isValidApiKey(key: string): boolean`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 import { describe, it, expect } from 'vitest'
@@ -60,12 +60,12 @@ describe('isValidApiKey', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/unit/api-key.test.ts`
 Expected: FAIL — module not found errors
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```typescript
 export function maskApiKey(key: string): string {
@@ -78,12 +78,12 @@ export function isValidApiKey(key: string): boolean {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run tests/unit/api-key.test.ts`
 Expected: PASS (3/3)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/utils/api-key.ts tests/unit/api-key.test.ts
@@ -102,7 +102,7 @@ git commit -m "feat: add API key masking and validation utilities"
 - Consumes: `LLMMessage`, `LLMResponse` from `src/types/provider.ts`
 - Produces: `LLMProvider` interface, `ChatParams` interface
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 import { describe, it, expect } from 'vitest'
@@ -152,12 +152,12 @@ describe('LLMProvider interface', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/unit/llm/provider.test.ts`
 Expected: FAIL — module not found for `src/llm/provider.ts`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```typescript
 import type { LLMMessage, LLMResponse } from '../types/provider.js'
@@ -175,12 +175,12 @@ export interface LLMProvider {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run tests/unit/llm/provider.test.ts`
 Expected: PASS (3/3)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/llm/provider.ts tests/unit/llm/provider.test.ts
@@ -189,7 +189,7 @@ git commit -m "feat: define LLMProvider interface and ChatParams type"
 
 ---
 
-### Task 3: OpenAI 兼容适配器 + 注册中心
+### Task 3: OpenAI 兼容适配器 + 注册中心 ✅
 
 **Files:**
 - Create: `src/llm/adapters/openai-compat.ts`
@@ -200,7 +200,7 @@ git commit -m "feat: define LLMProvider interface and ChatParams type"
 - Consumes: `LLMProvider`, `ChatParams` from `src/llm/provider.ts`, `LLMResponse` from `src/types/provider.ts`
 - Produces: `OpenAICompatibleProvider` class, `ProviderRegistry` class, `createProviderFromConfig(config): LLMProvider`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -346,12 +346,12 @@ describe('createProviderFromConfig', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/unit/llm/openai-compat.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 File `src/llm/adapters/openai-compat.ts`:
 
@@ -469,12 +469,12 @@ export function createProviderFromConfig(config: Config): LLMProvider {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run tests/unit/llm/openai-compat.test.ts`
 Expected: PASS (6/6)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/llm/adapters/openai-compat.ts src/llm/registry.ts tests/unit/llm/openai-compat.test.ts
@@ -493,7 +493,7 @@ git commit -m "feat: implement OpenAI compatible adapter and provider registry"
 - Consumes: `LLMProvider` from `src/llm/provider.ts`, `createProviderFromConfig` from `src/llm/registry.ts`, `Config` from `src/types/config.ts`, `ChatMode` from `src/types/mode.ts`, `maskApiKey` from `src/utils/api-key.ts`
 - Produces: `startChat(config: Config): Promise<void>`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -647,12 +647,12 @@ describe('startChat', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/unit/chat.test.ts`
 Expected: FAIL — module not found for `src/cli/chat.ts`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```typescript
 import * as readline from 'node:readline'
@@ -850,12 +850,12 @@ export async function startChat(config: Config): Promise<void> {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run tests/unit/chat.test.ts`
 Expected: PASS (5/5)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/cli/chat.ts tests/unit/chat.test.ts
@@ -872,7 +872,7 @@ git commit -m "feat: implement chat REPL with readline and slash commands"
 **Interfaces:**
 - Consumes: `startChat` from `src/cli/chat.ts`, `ConfigResolver` from `src/config/resolver.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -915,12 +915,12 @@ describe('index entry', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/unit/index.test.ts`
 Expected: PASS or some test result
 
-- [ ] **Step 3: Modify implementation**
+- [x] **Step 3: Modify implementation**
 
 ```typescript
 #!/usr/bin/env node
@@ -967,17 +967,17 @@ async function main(options: CLIOptions): Promise<void> {
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `npx vitest run`
 Expected: All existing tests + new tests pass
 
-- [ ] **Step 5: Run typecheck**
+- [x] **Step 5: Run typecheck**
 
 Run: `npx tsc --noEmit`
 Expected: No type errors
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/index.ts
