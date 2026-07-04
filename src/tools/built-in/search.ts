@@ -1,5 +1,5 @@
-import { glob } from "glob";
 import * as fs from "node:fs/promises";
+import { glob } from "glob";
 import type { ToolDefinition } from "../../types/tool.js";
 import { grepNative } from "../../utils/grep.js";
 

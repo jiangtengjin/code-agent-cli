@@ -32,7 +32,7 @@ export async function grepNative(
   async function walkDir(dir: string): Promise<void> {
     if (results.length >= maxResults) return;
 
-    let entries;
+    let entries: import("node:fs").Dirent[];
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
     } catch {

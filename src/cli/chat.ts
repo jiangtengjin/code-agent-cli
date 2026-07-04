@@ -74,6 +74,7 @@ ${chalk.bold("可用命令:")}
 
     case "exit":
       process.exit(0);
+      break; // Unreachable, but satisfies linter
 
     default:
       console.log(chalk.yellow(`未知命令: /${cmd}。输入 /help 查看可用命令`));
