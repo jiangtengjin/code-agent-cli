@@ -107,6 +107,7 @@ async function handleToolCalls(
   toolCalls: LLMToolCall[],
   toolRegistry: ToolRegistry,
   messages: LLMMessage[],
+  rl: readline.Interface,
 ): Promise<void> {
   for (const toolCall of toolCalls) {
     const tool = toolRegistry.get(toolCall.name);
@@ -125,7 +126,7 @@ async function handleToolCalls(
     console.log(chalk.gray(`参数: ${JSON.stringify(toolCall.args, null, 2)}`));
 
     if (tool.requiresConfirm) {
-      const confirmed = await userConfirm(toolCall);
+      const confirmed = await userConfirm(toolCall, rl);
       if (!confirmed) {
         console.log(chalk.yellow("用户取消操作"));
         messages.push({
@@ -157,20 +158,14 @@ async function handleToolCalls(
   }
 }
 
-function userConfirm(toolCall: LLMToolCall): Promise<boolean> {
+function userConfirm(toolCall: LLMToolCall, rl: readline.Interface): Promise<boolean> {
   return new Promise((resolve) => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-
     const argsStr = JSON.stringify(toolCall.args, null, 2);
     const isSensitive = isSensitivePath(argsStr);
 
     const warning = isSensitive ? chalk.red("⚠ 检测到敏感文件操作！") : "";
 
     rl.question(`${warning}\n确认执行 ${toolCall.name}? (y/N): `, (answer) => {
-      rl.close();
       resolve(answer.toLowerCase() === "y");
     });
   });
@@ -260,7 +255,7 @@ export async function startChat(config: Config): Promise<void> {
       }
 
       if (response.toolCalls && response.toolCalls.length > 0) {
-        await handleToolCalls(response.toolCalls, toolRegistry, messages);
+        await handleToolCalls(response.toolCalls, toolRegistry, messages, rl);
       }
 
       if (response.usage) {
