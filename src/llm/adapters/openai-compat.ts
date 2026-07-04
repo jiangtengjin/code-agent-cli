@@ -28,8 +28,17 @@ export class OpenAICompatibleProvider implements LLMProvider {
           ...params.messages.map((m) => ({
             role: m.role,
             content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+            ...(m.toolCallId ? { tool_call_id: m.toolCallId } : {}),
           })),
         ],
+        tools: params.tools?.map((t) => ({
+          type: "function",
+          function: {
+            name: t.name,
+            description: t.description,
+            parameters: t.parameters,
+          },
+        })),
         max_tokens: params.maxTokens,
         temperature: params.temperature,
       }),
