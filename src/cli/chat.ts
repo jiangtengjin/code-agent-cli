@@ -249,13 +249,26 @@ export async function startChat(config: Config): Promise<void> {
         tools: toolRegistry.getToolDefinitions(),
       });
 
-      if (response.content) {
+      // 添加 assistant 消息（可能同时包含 content 和 tool_calls）
+      if (response.toolCalls && response.toolCalls.length > 0) {
+        // 有 tool_calls 时，需要保存完整的 assistant 消息
+        messages.push({
+          role: "assistant",
+          content: response.content || null,
+          toolCalls: response.toolCalls.map((tc) => ({
+            id: tc.id,
+            type: "function" as const,
+            function: {
+              name: tc.name,
+              arguments: JSON.stringify(tc.args),
+            },
+          })),
+        });
+        await handleToolCalls(response.toolCalls, toolRegistry, messages, rl);
+      } else if (response.content) {
+        // 普通文本响应
         messages.push({ role: "assistant", content: response.content });
         displayResponse(response.content);
-      }
-
-      if (response.toolCalls && response.toolCalls.length > 0) {
-        await handleToolCalls(response.toolCalls, toolRegistry, messages, rl);
       }
 
       if (response.usage) {

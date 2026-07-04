@@ -17,11 +17,20 @@ export interface LLMMessage {
   /** 消息角色 */
   role: "system" | "user" | "assistant" | "tool";
   /** 消息内容：纯文本或多模态片段数组 */
-  content: string | LLMContentPart[];
+  content: string | LLMContentPart[] | null;
   /** 工具调用 ID（tool 类型消息回传） */
   toolCallId?: string;
   /** 工具名称（tool 类型消息回传） */
   toolName?: string;
+  /** 工具调用列表（assistant 类型消息携带） */
+  toolCalls?: Array<{
+    id: string;
+    type: "function";
+    function: {
+      name: string;
+      arguments: string;
+    };
+  }>;
 }
 
 /** LLM 返回的工具调用指令 */
