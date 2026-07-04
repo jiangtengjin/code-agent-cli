@@ -50,11 +50,6 @@ function drawUserMessage(content: string): void {
   drawBorderedBox("You", content, chalk.white);
 }
 
-function drawAIMessage(content: string): void {
-  if (!content) return;
-  drawBorderedBox("AI", content, chalk.green);
-}
-
 function drawInputFrame(mode: ChatMode): void {
   const width = process.stdout.columns - 2;
   const modeText = `[${mode}]`;
@@ -318,7 +313,9 @@ export async function startChat(config: Config): Promise<void> {
         await handleToolCalls(response.toolCalls, toolRegistry, messages, rl);
       } else if (response.content) {
         messages.push({ role: "assistant", content: response.content });
-        drawAIMessage(response.content);
+        const header = chalk.dim("─── AI ────────────────────────────────────────");
+        const footer = chalk.dim("────────────────────────────────────────────────");
+        console.log(`\n${header}\n${response.content}\n${footer}\n`);
       }
 
       if (response.usage) {
