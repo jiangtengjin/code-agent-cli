@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import type { ToolDefinition } from "../../types/tool.js";
+import { generateDiff } from "../../utils/diff.js";
 
 interface ReadFileArgs {
   path: string;
@@ -44,6 +45,57 @@ export const readFileTool: ToolDefinition = {
       return {
         success: false,
         error: `读取文件失败: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  },
+};
+
+interface EditFileArgs {
+  path: string;
+  oldString: string;
+  newString: string;
+}
+
+export const editFileTool: ToolDefinition = {
+  name: "edit_file",
+  description: "精确编辑文件内容（搜索替换）",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "文件路径" },
+      oldString: { type: "string", description: "需要替换的原始文本" },
+      newString: { type: "string", description: "替换后的新文本" },
+    },
+    required: ["path", "oldString", "newString"],
+  },
+  requiresConfirm: true,
+  async execute(args) {
+    const { path, oldString, newString } = args as unknown as EditFileArgs;
+
+    try {
+      const content = await fs.readFile(path, "utf-8");
+
+      if (!content.includes(oldString)) {
+        return {
+          success: false,
+          error: `在 ${path} 中未找到匹配的文本。前 100 个字符: "${content.slice(0, 100)}"`,
+        };
+      }
+
+      const newContent = content.replace(oldString, newString);
+      await fs.writeFile(path, newContent, "utf-8");
+
+      const diff = generateDiff(content, newContent);
+
+      return {
+        success: true,
+        data: { path, diff },
+        metadata: { filePath: path, diff },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `编辑文件失败: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
   },
