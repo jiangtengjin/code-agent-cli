@@ -116,6 +116,17 @@ describe('edit_file tool', () => {
     expect(content).toBe('c b c b c')
   })
 
+  it('应该处理文件不存在的情况', async () => {
+    const result = await editFileTool.execute({
+      path: '/nonexistent/file.txt',
+      oldString: 'test',
+      newString: 'new',
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('编辑文件失败')
+  })
+
   it('应该有正确的工具定义', () => {
     expect(editFileTool.name).toBe('edit_file')
     expect(editFileTool.description).toBe('精确编辑文件内容（搜索替换）')
@@ -146,6 +157,16 @@ describe('write_file tool', () => {
 
     const content = await fs.readFile(filePath, 'utf-8')
     expect(content).toBe('Hello World')
+  })
+
+  it('应该处理写入失败的情况', async () => {
+    const result = await writeFileTool.execute({
+      path: '/nonexistent/directory/file.txt',
+      content: 'test',
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('写入文件失败')
   })
 
   it('应该有正确的工具定义', () => {
@@ -179,6 +200,16 @@ describe('create_file tool', () => {
     expect(content).toBe('Hello World')
   })
 
+  it('应该处理创建失败的情况', async () => {
+    const result = await createFileTool.execute({
+      path: 'C:\\Users\\nonexistent_user\\file.txt',
+      content: 'test',
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('创建文件失败')
+  })
+
   it('应该有正确的工具定义', () => {
     expect(createFileTool.name).toBe('create_file')
     expect(createFileTool.requiresConfirm).toBe(true)
@@ -208,6 +239,13 @@ describe('delete_file tool', () => {
     expect(exists).toBe(false)
   })
 
+  it('应该处理文件不存在的情况', async () => {
+    const result = await deleteFileTool.execute({ path: '/nonexistent/file.txt' })
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('删除文件失败')
+  })
+
   it('应该有正确的工具定义', () => {
     expect(deleteFileTool.name).toBe('delete_file')
     expect(deleteFileTool.requiresConfirm).toBe(true)
@@ -232,7 +270,39 @@ describe('list_dir tool', () => {
     const result = await listDirTool.execute({ path: tempDir })
 
     expect(result.success).toBe(true)
-    expect(result.data).toHaveProperty('entries')
+    expect(result.data.entries).toHaveLength(3)
+    expect(result.data.count).toBe(3)
+
+    const names = result.data.entries.map((e: { name: string }) => e.name).sort()
+    expect(names).toEqual(['file1.txt', 'file2.txt', 'subdir'])
+
+    const types = result.data.entries.map((e: { type: string }) => e.type).sort()
+    expect(types).toEqual(['directory', 'file', 'file'])
+  })
+
+  it('应该支持递归深度', async () => {
+    await fs.writeFile(path.join(tempDir, 'subdir', 'nested.txt'), 'nested')
+
+    const result = await listDirTool.execute({ path: tempDir, depth: 1 })
+
+    expect(result.success).toBe(true)
+    expect(result.data.entries).toHaveLength(4)
+    expect(result.data.entries.some((e: { name: string }) => e.name === 'nested.txt')).toBe(true)
+  })
+
+  it('应该支持模式过滤', async () => {
+    const result = await listDirTool.execute({ path: tempDir, pattern: '*.txt' })
+
+    expect(result.success).toBe(true)
+    expect(result.data.entries).toHaveLength(2)
+    expect(result.data.entries.every((e: { name: string }) => e.name.endsWith('.txt'))).toBe(true)
+  })
+
+  it('应该处理目录不存在的情况', async () => {
+    const result = await listDirTool.execute({ path: '/nonexistent/dir' })
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('列出目录失败')
   })
 
   it('应该有正确的工具定义', () => {

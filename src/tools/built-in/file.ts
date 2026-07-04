@@ -214,34 +214,59 @@ export const deleteFileTool: ToolDefinition = {
 
 interface ListDirArgs {
   path: string;
+  depth?: number;
+  pattern?: string;
+}
+
+async function listDirRecursive(
+  dirPath: string,
+  maxDepth: number,
+  currentDepth: number,
+): Promise<Array<{ name: string; type: string; path: string }>> {
+  const entries = await fs.readdir(dirPath, { withFileTypes: true });
+  const result: Array<{ name: string; type: string; path: string }> = [];
+
+  for (const entry of entries) {
+    const entryPath = path.join(dirPath, entry.name);
+    const entryType = entry.isDirectory() ? "directory" : "file";
+    result.push({ name: entry.name, type: entryType, path: entryPath });
+
+    if (entry.isDirectory() && currentDepth < maxDepth) {
+      const subEntries = await listDirRecursive(entryPath, maxDepth, currentDepth + 1);
+      result.push(...subEntries);
+    }
+  }
+
+  return result;
 }
 
 export const listDirTool: ToolDefinition = {
   name: "list_dir",
-  description: "列出目录内容",
+  description: "列出目录内容，支持递归深度和模式过滤",
   parameters: {
     type: "object",
     properties: {
       path: { type: "string", description: "目录路径" },
+      depth: { type: "number", description: "递归深度（默认0，仅列出当前目录）" },
+      pattern: { type: "string", description: "文件名过滤模式（支持通配符）" },
     },
     required: ["path"],
   },
   requiresConfirm: false,
   async execute(args) {
-    const { path: dirPath } = args as unknown as ListDirArgs;
+    const { path: dirPath, depth = 0, pattern } = args as unknown as ListDirArgs;
 
     try {
-      const entries = await fs.readdir(dirPath, { withFileTypes: true });
+      let entries = await listDirRecursive(dirPath, depth, 0);
 
-      const result = entries.map((entry) => ({
-        name: entry.name,
-        type: entry.isDirectory() ? "directory" : "file",
-        path: path.join(dirPath, entry.name),
-      }));
+      if (pattern) {
+        const regex = new RegExp(`^${pattern.replace(/\*/g, ".*").replace(/\?/g, ".")}$`, "i");
+        entries = entries.filter((entry) => regex.test(entry.name));
+      }
 
       return {
         success: true,
-        data: { entries: result, count: result.length },
+        data: { entries, count: entries.length },
       };
     } catch (error) {
       return {
