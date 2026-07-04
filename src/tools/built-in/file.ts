@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import type { ToolDefinition } from "../../types/tool.js";
 import { generateDiff } from "../../utils/diff.js";
 
@@ -97,6 +98,155 @@ export const editFileTool: ToolDefinition = {
       return {
         success: false,
         error: `编辑文件失败: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  },
+};
+
+interface WriteFileArgs {
+  path: string;
+  content: string;
+}
+
+export const writeFileTool: ToolDefinition = {
+  name: "write_file",
+  description: "写入/覆盖文件内容",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "文件路径" },
+      content: { type: "string", description: "文件内容" },
+    },
+    required: ["path", "content"],
+  },
+  requiresConfirm: true,
+  async execute(args) {
+    const { path: filePath, content } = args as unknown as WriteFileArgs;
+
+    try {
+      await fs.writeFile(filePath, content, "utf-8");
+
+      return {
+        success: true,
+        data: { path: filePath, length: content.length },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `写入文件失败: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  },
+};
+
+interface CreateFileArgs {
+  path: string;
+  content: string;
+}
+
+export const createFileTool: ToolDefinition = {
+  name: "create_file",
+  description: "创建新文件，自动创建目录",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "文件路径" },
+      content: { type: "string", description: "文件内容" },
+    },
+    required: ["path", "content"],
+  },
+  requiresConfirm: true,
+  async execute(args) {
+    const { path: filePath, content } = args as unknown as CreateFileArgs;
+
+    try {
+      const dir = path.dirname(filePath);
+      await fs.mkdir(dir, { recursive: true });
+
+      await fs.writeFile(filePath, content, "utf-8");
+
+      return {
+        success: true,
+        data: { path: filePath, length: content.length },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `创建文件失败: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  },
+};
+
+interface DeleteFileArgs {
+  path: string;
+}
+
+export const deleteFileTool: ToolDefinition = {
+  name: "delete_file",
+  description: "删除文件",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "文件路径" },
+    },
+    required: ["path"],
+  },
+  requiresConfirm: true,
+  async execute(args) {
+    const { path: filePath } = args as unknown as DeleteFileArgs;
+
+    try {
+      await fs.unlink(filePath);
+
+      return {
+        success: true,
+        data: { path: filePath },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `删除文件失败: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  },
+};
+
+interface ListDirArgs {
+  path: string;
+}
+
+export const listDirTool: ToolDefinition = {
+  name: "list_dir",
+  description: "列出目录内容",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "目录路径" },
+    },
+    required: ["path"],
+  },
+  requiresConfirm: false,
+  async execute(args) {
+    const { path: dirPath } = args as unknown as ListDirArgs;
+
+    try {
+      const entries = await fs.readdir(dirPath, { withFileTypes: true });
+
+      const result = entries.map((entry) => ({
+        name: entry.name,
+        type: entry.isDirectory() ? "directory" : "file",
+        path: path.join(dirPath, entry.name),
+      }));
+
+      return {
+        success: true,
+        data: { entries: result, count: result.length },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `列出目录失败: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
   },

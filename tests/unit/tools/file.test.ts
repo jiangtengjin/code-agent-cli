@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { readFileTool, editFileTool } from '../../../src/tools/built-in/file.js'
+import { readFileTool, editFileTool, writeFileTool, createFileTool, deleteFileTool, listDirTool } from '../../../src/tools/built-in/file.js'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import * as os from 'node:os'
@@ -120,5 +120,123 @@ describe('edit_file tool', () => {
     expect(editFileTool.name).toBe('edit_file')
     expect(editFileTool.description).toBe('精确编辑文件内容（搜索替换）')
     expect(editFileTool.requiresConfirm).toBe(true)
+  })
+})
+
+describe('write_file tool', () => {
+  let tempDir: string
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'test-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true })
+  })
+
+  it('应该写入文件', async () => {
+    const filePath = path.join(tempDir, 'test.txt')
+
+    const result = await writeFileTool.execute({
+      path: filePath,
+      content: 'Hello World',
+    })
+
+    expect(result.success).toBe(true)
+
+    const content = await fs.readFile(filePath, 'utf-8')
+    expect(content).toBe('Hello World')
+  })
+
+  it('应该有正确的工具定义', () => {
+    expect(writeFileTool.name).toBe('write_file')
+    expect(writeFileTool.requiresConfirm).toBe(true)
+  })
+})
+
+describe('create_file tool', () => {
+  let tempDir: string
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'test-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true })
+  })
+
+  it('应该创建文件和目录', async () => {
+    const filePath = path.join(tempDir, 'subdir', 'test.txt')
+
+    const result = await createFileTool.execute({
+      path: filePath,
+      content: 'Hello World',
+    })
+
+    expect(result.success).toBe(true)
+
+    const content = await fs.readFile(filePath, 'utf-8')
+    expect(content).toBe('Hello World')
+  })
+
+  it('应该有正确的工具定义', () => {
+    expect(createFileTool.name).toBe('create_file')
+    expect(createFileTool.requiresConfirm).toBe(true)
+  })
+})
+
+describe('delete_file tool', () => {
+  let tempDir: string
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'test-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true })
+  })
+
+  it('应该删除文件', async () => {
+    const filePath = path.join(tempDir, 'test.txt')
+    await fs.writeFile(filePath, 'Hello World')
+
+    const result = await deleteFileTool.execute({ path: filePath })
+
+    expect(result.success).toBe(true)
+
+    const exists = await fs.access(filePath).then(() => true, () => false)
+    expect(exists).toBe(false)
+  })
+
+  it('应该有正确的工具定义', () => {
+    expect(deleteFileTool.name).toBe('delete_file')
+    expect(deleteFileTool.requiresConfirm).toBe(true)
+  })
+})
+
+describe('list_dir tool', () => {
+  let tempDir: string
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'test-'))
+    await fs.writeFile(path.join(tempDir, 'file1.txt'), 'content1')
+    await fs.writeFile(path.join(tempDir, 'file2.txt'), 'content2')
+    await fs.mkdir(path.join(tempDir, 'subdir'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true })
+  })
+
+  it('应该列出目录内容', async () => {
+    const result = await listDirTool.execute({ path: tempDir })
+
+    expect(result.success).toBe(true)
+    expect(result.data).toHaveProperty('entries')
+  })
+
+  it('应该有正确的工具定义', () => {
+    expect(listDirTool.name).toBe('list_dir')
+    expect(listDirTool.requiresConfirm).toBe(false)
   })
 })
