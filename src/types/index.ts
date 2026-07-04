@@ -20,5 +20,5 @@ export type {
   LLMResponse,
   LLMContentPart,
 } from "./provider.js";
-export type { ToolDefinition, ToolResult } from "./tool.js";
+export type { ToolDefinition, ToolResult, ToolCall } from "./tool.js";
 export type { MCPToolDefinition, MCPCallToolResult } from "./mcp.js";

@@ -27,6 +27,23 @@ export interface ToolResult {
   data?: unknown;
   /** 错误信息 */
   error?: string;
-  /** 是否需要进一步用户确认 */
-  requiresConfirm?: boolean;
+  /** 执行元数据 */
+  metadata?: {
+    /** 文件路径 */
+    filePath?: string;
+    /** 差异内容 */
+    diff?: string;
+    /** 行数 */
+    lineCount?: number;
+  };
+}
+
+/** 工具调用 */
+export interface ToolCall {
+  /** 调用 ID */
+  id: string;
+  /** 工具名称 */
+  name: string;
+  /** 调用参数 */
+  args: Record<string, unknown>;
 }
