@@ -76,13 +76,14 @@ export const editFileTool: ToolDefinition = {
       const content = await fs.readFile(path, "utf-8");
 
       if (!content.includes(oldString)) {
+        const lines = content.split("\n").length;
         return {
           success: false,
-          error: `在 ${path} 中未找到匹配的文本。前 100 个字符: "${content.slice(0, 100)}"`,
+          error: `在 ${path} 中未找到匹配的文本，文件共 ${lines} 行`,
         };
       }
 
-      const newContent = content.replace(oldString, newString);
+      const newContent = content.replaceAll(oldString, newString);
       await fs.writeFile(path, newContent, "utf-8");
 
       const diff = generateDiff(content, newContent);

@@ -101,6 +101,21 @@ describe('edit_file tool', () => {
     expect(result.error).toContain('未找到匹配的文本')
   })
 
+  it('应该替换所有匹配的文本', async () => {
+    const filePath = path.join(tempDir, 'test.txt')
+    await fs.writeFile(filePath, 'a b a b a')
+
+    const result = await editFileTool.execute({
+      path: filePath,
+      oldString: 'a',
+      newString: 'c',
+    })
+
+    expect(result.success).toBe(true)
+    const content = await fs.readFile(filePath, 'utf-8')
+    expect(content).toBe('c b c b c')
+  })
+
   it('应该有正确的工具定义', () => {
     expect(editFileTool.name).toBe('edit_file')
     expect(editFileTool.description).toBe('精确编辑文件内容（搜索替换）')
