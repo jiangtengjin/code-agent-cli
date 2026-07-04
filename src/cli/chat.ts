@@ -289,41 +289,61 @@ export async function startChat(config: Config): Promise<void> {
     const spinner = ora({ text: "AI 思考中...", color: "cyan" }).start();
 
     try {
-      const response = await provider.chat({
-        messages,
-        systemPrompt: config.systemPrompt,
-        tools: toolRegistry.getToolDefinitions(),
-      });
+      const maxIterations = 50;
+      let iteration = 0;
 
-      spinner.stop();
+      while (iteration < maxIterations) {
+        iteration++;
+        if (iteration > 1) {
+          spinner.text = `AI 执行中... (第 ${iteration - 1} 步)`;
+          spinner.start();
+        }
 
-      if (response.toolCalls && response.toolCalls.length > 0) {
-        messages.push({
-          role: "assistant",
-          content: response.content || null,
-          toolCalls: response.toolCalls.map((tc) => ({
-            id: tc.id,
-            type: "function" as const,
-            function: {
-              name: tc.name,
-              arguments: JSON.stringify(tc.args),
-            },
-          })),
+        const response = await provider.chat({
+          messages,
+          systemPrompt: config.systemPrompt,
+          tools: toolRegistry.getToolDefinitions(),
         });
-        await handleToolCalls(response.toolCalls, toolRegistry, messages, rl);
-      } else if (response.content) {
-        messages.push({ role: "assistant", content: response.content });
-        const header = chalk.dim("─── AI ────────────────────────────────────────");
-        const footer = chalk.dim("────────────────────────────────────────────────");
-        console.log(`\n${header}\n${response.content}\n${footer}\n`);
+
+        spinner.stop();
+
+        if (response.toolCalls && response.toolCalls.length > 0) {
+          messages.push({
+            role: "assistant",
+            content: response.content || null,
+            toolCalls: response.toolCalls.map((tc) => ({
+              id: tc.id,
+              type: "function" as const,
+              function: {
+                name: tc.name,
+                arguments: JSON.stringify(tc.args),
+              },
+            })),
+          });
+          await handleToolCalls(response.toolCalls, toolRegistry, messages, rl);
+          continue;
+        }
+
+        if (response.content) {
+          messages.push({ role: "assistant", content: response.content });
+          const header = chalk.dim("─── AI ────────────────────────────────────────");
+          const footer = chalk.dim("────────────────────────────────────────────────");
+          console.log(`\n${header}\n${response.content}\n${footer}\n`);
+        }
+
+        if (response.usage) {
+          console.log(
+            chalk.gray(
+              `Token: 输入 ${response.usage.promptTokens} / 输出 ${response.usage.completionTokens}`,
+            ),
+          );
+        }
+
+        break;
       }
 
-      if (response.usage) {
-        console.log(
-          chalk.gray(
-            `Token: 输入 ${response.usage.promptTokens} / 输出 ${response.usage.completionTokens}`,
-          ),
-        );
+      if (iteration >= maxIterations) {
+        console.log(chalk.yellow("\n⚠ 已达到最大执行步数限制，可能未完全执行。"));
       }
     } catch (error) {
       spinner.stop();
