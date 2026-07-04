@@ -1,5 +1,6 @@
 import * as readline from "node:readline";
 import chalk from "chalk";
+import ora from "ora";
 import type { LLMProvider } from "../llm/provider.js";
 import { createProviderFromConfig } from "../llm/registry.js";
 import { createDefaultToolRegistry } from "../tools/built-in/index.js";
@@ -10,8 +11,59 @@ import type { LLMMessage, LLMToolCall } from "../types/provider.js";
 import { maskApiKey } from "../utils/api-key.js";
 import { isSensitivePath } from "../utils/security.js";
 
-function getPrompt(mode: ChatMode): string {
-  return chalk.cyan(`${mode} > `);
+const MODE_COLORS: Record<ChatMode, (text: string) => string> = {
+  normal: chalk.cyan,
+  auto: chalk.yellow,
+  plan: chalk.blue,
+  edit: chalk.magenta,
+};
+
+function getModeLabel(mode: ChatMode): string {
+  return MODE_COLORS[mode](`[${mode}]`);
+}
+
+function drawBorderedBox(
+  label: string,
+  content: string,
+  contentColor: (text: string) => string,
+): void {
+  const lines = content.split("\n");
+  const maxContentWidth = Math.max(...lines.map((l) => l.length), label.length + 2);
+  const terminalWidth = process.stdout.columns - 6;
+  const width = Math.min(maxContentWidth, terminalWidth) + 4;
+
+  console.log(
+    `${chalk.dim("┌─ ") + label} ${chalk.dim(`${"─".repeat(Math.max(width - label.length - 4, 0))}┐`)}`,
+  );
+
+  for (const line of lines) {
+    const display = line.length > width - 4 ? line.slice(0, width - 4) : line;
+    const pad = " ".repeat(Math.max(width - 4 - display.length, 0));
+    console.log(chalk.dim("│ ") + contentColor(display) + pad + chalk.dim(" │"));
+  }
+
+  console.log(chalk.dim(`└${"─".repeat(Math.max(width - 2, 0))}┘`));
+}
+
+function drawUserMessage(content: string): void {
+  if (!content.trim()) return;
+  drawBorderedBox("You", content, chalk.white);
+}
+
+function drawAIMessage(content: string): void {
+  if (!content) return;
+  drawBorderedBox("AI", content, chalk.green);
+}
+
+function drawInputFrame(mode: ChatMode): void {
+  const width = process.stdout.columns - 2;
+  const modeText = `[${mode}]`;
+  const prefix = "┌─ ❯ ";
+  const suffix = "┐";
+  const dashes = Math.max(width - prefix.length - modeText.length - suffix.length - 2, 1);
+  console.log(
+    `${chalk.dim(prefix) + getModeLabel(mode)} ${chalk.dim("─".repeat(dashes) + suffix)}`,
+  );
 }
 
 function displayWelcome(config: Config, provider: LLMProvider): void {
@@ -74,17 +126,11 @@ ${chalk.bold("可用命令:")}
 
     case "exit":
       process.exit(0);
-      break; // Unreachable, but satisfies linter
+      break;
 
     default:
       console.log(chalk.yellow(`未知命令: /${cmd}。输入 /help 查看可用命令`));
   }
-}
-
-function displayResponse(content: string): void {
-  console.log(`\n${chalk.cyan("─── AI ────────────────────────────────────────")}`);
-  console.log(content);
-  console.log(`${chalk.cyan("────────────────────────────────────────────────")}\n`);
 }
 
 function displayError(error: unknown): void {
@@ -188,10 +234,10 @@ export async function startChat(config: Config): Promise<void> {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: getPrompt(mode),
+    prompt: "",
+    terminal: true,
   });
 
-  // Enable raw keypress events (must be after createInterface on Windows)
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(true);
   }
@@ -201,8 +247,6 @@ export async function startChat(config: Config): Promise<void> {
     (_str: string, key: { name?: string; ctrl?: boolean }) => {
       if (key.name === "tab" || (key.name === "t" && key.ctrl)) {
         cycleMode();
-        // Readline also receives the tab and inserts \t into buffer.
-        // Clean it up immediately so it doesn't appear in the input.
         if (key.name === "tab") {
           process.nextTick(() => rl.write(null, { name: "backspace" }));
         }
@@ -214,13 +258,16 @@ export async function startChat(config: Config): Promise<void> {
     const modes: ChatMode[] = ["normal", "auto", "plan", "edit"];
     const idx = modes.indexOf(mode);
     mode = modes[(idx + 1) % modes.length];
-    rl.setPrompt(getPrompt(mode));
+    drawInputFrame(mode);
+    rl.setPrompt(chalk.dim("│ ") + chalk.cyan("❯ "));
     rl.prompt(true);
   }
 
   rl.on("line", async (input: string) => {
     const trimmed = input.trim();
     if (!trimmed) {
+      drawInputFrame(mode);
+      rl.setPrompt(chalk.dim("│ ") + chalk.cyan("❯ "));
       rl.prompt();
       return;
     }
@@ -232,15 +279,19 @@ export async function startChat(config: Config): Promise<void> {
         config,
         setMode: (m) => {
           mode = m;
-          rl.setPrompt(getPrompt(m));
+          rl.setPrompt(chalk.dim("│ ") + chalk.cyan("❯ "));
         },
       });
+      drawInputFrame(mode);
+      rl.setPrompt(chalk.dim("│ ") + chalk.cyan("❯ "));
       rl.prompt();
       return;
     }
 
+    drawUserMessage(trimmed);
     messages.push({ role: "user", content: trimmed });
-    console.log(chalk.yellow("AI 思考中..."));
+
+    const spinner = ora({ text: "AI 思考中...", color: "cyan" }).start();
 
     try {
       const response = await provider.chat({
@@ -249,9 +300,9 @@ export async function startChat(config: Config): Promise<void> {
         tools: toolRegistry.getToolDefinitions(),
       });
 
-      // 添加 assistant 消息（可能同时包含 content 和 tool_calls）
+      spinner.stop();
+
       if (response.toolCalls && response.toolCalls.length > 0) {
-        // 有 tool_calls 时，需要保存完整的 assistant 消息
         messages.push({
           role: "assistant",
           content: response.content || null,
@@ -266,9 +317,8 @@ export async function startChat(config: Config): Promise<void> {
         });
         await handleToolCalls(response.toolCalls, toolRegistry, messages, rl);
       } else if (response.content) {
-        // 普通文本响应
         messages.push({ role: "assistant", content: response.content });
-        displayResponse(response.content);
+        drawAIMessage(response.content);
       }
 
       if (response.usage) {
@@ -279,11 +329,18 @@ export async function startChat(config: Config): Promise<void> {
         );
       }
     } catch (error) {
+      spinner.stop();
       displayError(error);
     }
 
+    drawInputFrame(mode);
+    rl.setPrompt(chalk.dim("│ ") + chalk.cyan("❯ "));
     rl.prompt();
   });
+
+  drawInputFrame(mode);
+  rl.setPrompt(chalk.dim("│ ") + chalk.cyan("❯ "));
+  rl.prompt();
 
   rl.on("close", () => {
     if (process.stdin.isTTY) {
@@ -292,6 +349,4 @@ export async function startChat(config: Config): Promise<void> {
     console.log();
     process.exit(0);
   });
-
-  rl.prompt();
 }

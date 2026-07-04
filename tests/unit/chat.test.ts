@@ -116,7 +116,9 @@ describe('startChat', () => {
 
     await lineCallbacks[0]('hello')
 
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('思考中'))
+    // User message should render in a bordered box
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('You'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('hello'))
 
     logSpy.mockRestore()
   })
