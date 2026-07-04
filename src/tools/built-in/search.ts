@@ -1,4 +1,5 @@
 import { glob } from "glob";
+import * as fs from "node:fs/promises";
 import type { ToolDefinition } from "../../types/tool.js";
 import { grepNative } from "../../utils/grep.js";
 
@@ -77,12 +78,32 @@ export const grepSearchTool: ToolDefinition = {
     } = args as unknown as GrepSearchArgs;
 
     try {
-      const results = await grepNative(pattern, {
+      try {
+        const stat = await fs.stat(searchPath);
+        if (!stat.isDirectory()) {
+          return { success: false, error: `搜索路径不是目录: ${searchPath}` };
+        }
+      } catch {
+        return { success: false, error: `搜索路径不存在: ${searchPath}` };
+      }
+
+      let extensions: string[] | undefined;
+      if (include) {
+        const dotIdx = include.lastIndexOf(".");
+        const ext = dotIdx >= 0 ? include.slice(dotIdx) : include;
+        extensions = [ext];
+      }
+
+      const { results, error: grepError } = await grepNative(pattern, {
         cwd: searchPath,
-        include,
+        extensions,
         ignoreCase,
         maxResults,
       });
+
+      if (grepError) {
+        return { success: false, error: grepError };
+      }
 
       return {
         success: true,

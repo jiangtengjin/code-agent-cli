@@ -27,6 +27,8 @@ describe('glob_search tool', () => {
     expect(result.success).toBe(true)
     expect(result.data).toHaveProperty('files')
     expect(result.data).toHaveProperty('count')
+    expect(result.data.files.some((f: string) => f.endsWith('test.txt') || f.endsWith('test.txt\\'))).toBe(true)
+    expect(result.data.count).toBe(1)
   })
 
   it('应该有正确的工具定义', () => {
@@ -57,6 +59,65 @@ describe('grep_search tool', () => {
     expect(result.success).toBe(true)
     expect(result.data).toHaveProperty('results')
     expect(result.data).toHaveProperty('count')
+    expect(result.data.results.length).toBeGreaterThan(0)
+    expect(result.data.results[0]).toHaveProperty('content', 'Hello World')
+    expect(result.data.results[0]).toHaveProperty('file')
+    expect(result.data.results[0].file).toContain('test.txt')
+  })
+
+  it('应该支持 ignoreCase 选项', async () => {
+    const result = await grepSearchTool.execute({
+      pattern: 'hello',
+      path: tempDir,
+      ignoreCase: true,
+    })
+
+    expect(result.success).toBe(true)
+    expect(result.data.results.length).toBeGreaterThan(0)
+    expect(result.data.results[0].content).toBe('Hello World')
+  })
+
+  it('应该支持 maxResults 限制', async () => {
+    const result = await grepSearchTool.execute({
+      pattern: 'Line',
+      path: tempDir,
+      maxResults: 1,
+    })
+
+    expect(result.success).toBe(true)
+    expect(result.data.results.length).toBe(1)
+  })
+
+  it('应该支持 include 过滤文件扩展名', async () => {
+    const result = await grepSearchTool.execute({
+      pattern: 'Hello',
+      path: tempDir,
+      include: '*.txt',
+    })
+
+    expect(result.success).toBe(true)
+    expect(result.data.results.length).toBeGreaterThan(0)
+    expect(result.data.results[0].file).toContain('.txt')
+  })
+
+  it('搜索不存在的路径应返回错误', async () => {
+    const result = await grepSearchTool.execute({
+      pattern: 'Hello',
+      path: '/nonexistent/path/that/does/not/exist',
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('不存在')
+  })
+
+  it('无效正则表达式应返回错误', async () => {
+    const result = await grepSearchTool.execute({
+      pattern: '(',
+      path: tempDir,
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('Invalid regex')
   })
 
   it('应该有正确的工具定义', () => {

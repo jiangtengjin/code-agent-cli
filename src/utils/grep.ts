@@ -3,7 +3,7 @@ import * as path from "node:path";
 
 interface GrepOptions {
   cwd: string;
-  include?: string;
+  extensions?: string[];
   ignoreCase?: boolean;
   maxResults?: number;
 }
@@ -14,15 +14,31 @@ interface GrepResult {
   content: string;
 }
 
-export async function grepNative(pattern: string, options: GrepOptions): Promise<GrepResult[]> {
-  const { cwd, include, ignoreCase = false, maxResults = 100 } = options;
-  const regex = new RegExp(pattern, ignoreCase ? "gi" : "g");
+export async function grepNative(
+  pattern: string,
+  options: GrepOptions,
+): Promise<{ results: GrepResult[]; error?: string }> {
+  const { cwd, extensions, ignoreCase = false, maxResults = 100 } = options;
+
+  let regex: RegExp;
+  try {
+    regex = new RegExp(pattern, ignoreCase ? "gi" : "g");
+  } catch {
+    return { results: [], error: `Invalid regex pattern: ${pattern}` };
+  }
+
   const results: GrepResult[] = [];
 
   async function walkDir(dir: string): Promise<void> {
     if (results.length >= maxResults) return;
 
-    const entries = await fs.readdir(dir, { withFileTypes: true });
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      // Permission denied or other read errors — skip this directory
+      return;
+    }
 
     for (const entry of entries) {
       if (results.length >= maxResults) return;
@@ -36,9 +52,9 @@ export async function grepNative(pattern: string, options: GrepOptions): Promise
       if (entry.isDirectory()) {
         await walkDir(fullPath);
       } else if (entry.isFile()) {
-        if (include) {
+        if (extensions && extensions.length > 0) {
           const ext = path.extname(entry.name);
-          if (!include.includes(ext)) {
+          if (!extensions.includes(ext)) {
             continue;
           }
         }
@@ -59,12 +75,12 @@ export async function grepNative(pattern: string, options: GrepOptions): Promise
             }
           }
         } catch {
-          // Skip unreadable files
+          // Skip unreadable files (binary, permission denied, etc.)
         }
       }
     }
   }
 
   await walkDir(cwd);
-  return results;
+  return { results };
 }
