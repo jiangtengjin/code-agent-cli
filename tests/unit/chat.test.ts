@@ -75,6 +75,25 @@ describe('slash command suggestions', () => {
   })
 })
 
+describe('task timing', () => {
+  it('formats total, thinking, tool, and iteration timing', async () => {
+    const { formatTaskTiming } = await import('../../src/cli/chat.js')
+
+    expect(
+      formatTaskTiming(
+        {
+          startedAt: 1000,
+          thinkingMs: 1500,
+          toolMs: 800,
+          toolCalls: 2,
+          iterations: 3,
+        },
+        4200,
+      ),
+    ).toBe('耗时: 总计 3.2s · 思考 1.5s · 工具 2 次 800ms · 轮次 3')
+  })
+})
+
 describe('startChat', () => {
   beforeEach(() => {
     vi.clearAllMocks()

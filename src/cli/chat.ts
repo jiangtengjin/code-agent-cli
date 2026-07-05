@@ -9,6 +9,7 @@ import type { Config } from "../types/config.js";
 import type { ChatMode } from "../types/mode.js";
 import type { LLMMessage, LLMToolCall } from "../types/provider.js";
 import { maskApiKey } from "../utils/api-key.js";
+import { formatDuration } from "../utils/format.js";
 import { isSensitivePath } from "../utils/security.js";
 
 const MODE_COLORS: Record<ChatMode, (text: string) => string> = {
@@ -89,6 +90,14 @@ export type SlashCompletion = {
   start: number;
   end: number;
   replacement: string;
+};
+
+export type TaskTimingStats = {
+  startedAt: number;
+  thinkingMs: number;
+  toolMs: number;
+  toolCalls: number;
+  iterations: number;
 };
 
 const MODES: ChatMode[] = ["normal", "auto", "plan", "edit"];
@@ -285,6 +294,39 @@ export function getSlashCommandCompletion(line: string): SlashCompletion | null 
   return null;
 }
 
+function nowMs(): number {
+  return Date.now();
+}
+
+function elapsedSince(startedAt: number): number {
+  return Math.max(nowMs() - startedAt, 0);
+}
+
+function createTaskTiming(): TaskTimingStats {
+  return {
+    startedAt: nowMs(),
+    thinkingMs: 0,
+    toolMs: 0,
+    toolCalls: 0,
+    iterations: 0,
+  };
+}
+
+export function formatTaskTiming(stats: TaskTimingStats, finishedAt = nowMs()): string {
+  const totalMs = Math.max(finishedAt - stats.startedAt, 0);
+  const parts = [`总计 ${formatDuration(totalMs)}`, `思考 ${formatDuration(stats.thinkingMs)}`];
+
+  if (stats.toolCalls > 0) {
+    parts.push(`工具 ${stats.toolCalls} 次 ${formatDuration(stats.toolMs)}`);
+  }
+
+  if (stats.iterations > 1) {
+    parts.push(`轮次 ${stats.iterations}`);
+  }
+
+  return `耗时: ${parts.join(" · ")}`;
+}
+
 function handleSlashCommand(
   input: string,
   ctx: {
@@ -358,8 +400,10 @@ async function handleToolCalls(
   toolRegistry: ToolRegistry,
   messages: LLMMessage[],
   rl: readline.Interface,
+  timing: TaskTimingStats,
 ): Promise<void> {
   for (const toolCall of toolCalls) {
+    timing.toolCalls++;
     const tool = toolRegistry.get(toolCall.name);
 
     if (!tool) {
@@ -388,16 +432,21 @@ async function handleToolCalls(
       }
     }
 
-    const result = await tool.execute(toolCall.args);
+    const toolStartedAt = nowMs();
+    let toolElapsed = 0;
+    const result = await tool.execute(toolCall.args).finally(() => {
+      toolElapsed = elapsedSince(toolStartedAt);
+      timing.toolMs += toolElapsed;
+    });
 
     if (result.success) {
-      console.log(chalk.green("✓ 执行成功"));
+      console.log(chalk.green(`✓ 执行成功 (${formatDuration(toolElapsed)})`));
       if (result.metadata?.diff) {
         console.log(chalk.gray("Diff:"));
         console.log(result.metadata.diff);
       }
     } else {
-      console.log(chalk.red(`✗ 执行失败: ${result.error}`));
+      console.log(chalk.red(`✗ 执行失败 (${formatDuration(toolElapsed)}): ${result.error}`));
     }
 
     messages.push({
@@ -613,6 +662,7 @@ export async function startChat(config: Config): Promise<void> {
     drawUserMessage(trimmed);
     messages.push({ role: "user", content: trimmed });
 
+    const timing = createTaskTiming();
     const spinner = ora({ text: "AI 思考中...", color: "cyan" }).start();
 
     try {
@@ -621,16 +671,22 @@ export async function startChat(config: Config): Promise<void> {
 
       while (iteration < maxIterations) {
         iteration++;
+        timing.iterations = iteration;
         if (iteration > 1) {
           spinner.text = `AI 执行中... (第 ${iteration - 1} 步)`;
           spinner.start();
         }
 
-        const response = await provider.chat({
-          messages,
-          systemPrompt: config.systemPrompt,
-          tools: toolRegistry.getToolDefinitions(),
-        });
+        const thinkingStartedAt = nowMs();
+        const response = await provider
+          .chat({
+            messages,
+            systemPrompt: config.systemPrompt,
+            tools: toolRegistry.getToolDefinitions(),
+          })
+          .finally(() => {
+            timing.thinkingMs += elapsedSince(thinkingStartedAt);
+          });
 
         spinner.stop();
 
@@ -647,7 +703,7 @@ export async function startChat(config: Config): Promise<void> {
               },
             })),
           });
-          await handleToolCalls(response.toolCalls, toolRegistry, messages, rl);
+          await handleToolCalls(response.toolCalls, toolRegistry, messages, rl, timing);
           continue;
         }
 
@@ -677,6 +733,7 @@ export async function startChat(config: Config): Promise<void> {
       displayError(error);
     }
 
+    console.log(chalk.gray(formatTaskTiming(timing)));
     promptNextInput();
   });
 
