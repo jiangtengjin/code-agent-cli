@@ -23,6 +23,58 @@ vi.mock('chalk', () => ({
   bold: (s: string) => s,
 }))
 
+describe('slash command suggestions', () => {
+  it('matches commands by name, alias, and Chinese intent keywords', async () => {
+    const { getSlashCommandSuggestions } = await import('../../src/cli/chat.js')
+
+    expect(getSlashCommandSuggestions('/he')[0]).toMatchObject({ kind: 'command', value: 'help' })
+    expect(getSlashCommandSuggestions('/q')[0]).toMatchObject({ kind: 'command', value: 'exit' })
+    expect(getSlashCommandSuggestions('/切换')[0]).toMatchObject({
+      kind: 'command',
+      value: 'mode',
+    })
+    expect(getSlashCommandSuggestions('/清空')[0]).toMatchObject({
+      kind: 'command',
+      value: 'clear',
+    })
+  })
+
+  it('returns mode value suggestions after /mode', async () => {
+    const { getSlashCommandSuggestions } = await import('../../src/cli/chat.js')
+
+    expect(getSlashCommandSuggestions('/mode p')[0]).toMatchObject({
+      kind: 'mode',
+      value: 'plan',
+    })
+  })
+
+  it('builds tab completions without forcing ambiguous choices', async () => {
+    const { getSlashCommandCompletion } = await import('../../src/cli/chat.js')
+
+    expect(getSlashCommandCompletion('/h')).toEqual({
+      start: 1,
+      end: 2,
+      replacement: 'help ',
+    })
+    expect(getSlashCommandCompletion('/m')).toEqual({
+      start: 1,
+      end: 2,
+      replacement: 'mod',
+    })
+    expect(getSlashCommandCompletion('/mod')).toBeNull()
+    expect(getSlashCommandCompletion('/清空')).toEqual({
+      start: 1,
+      end: 3,
+      replacement: 'clear ',
+    })
+    expect(getSlashCommandCompletion('/mode p')).toEqual({
+      start: 6,
+      end: 7,
+      replacement: 'plan',
+    })
+  })
+})
+
 describe('startChat', () => {
   beforeEach(() => {
     vi.clearAllMocks()

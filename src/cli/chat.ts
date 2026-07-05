@@ -29,15 +29,31 @@ function drawUserMessage(content: string): void {
   }
 }
 
-function drawInputFrame(mode: ChatMode): void {
-  const width = process.stdout.columns - 2;
+function formatInputFrame(mode: ChatMode): string {
+  const width = (process.stdout.columns ?? 80) - 2;
   const modeText = `[${mode}]`;
   const prefix = "┌─ ❯ ";
   const suffix = "┐";
   const dashes = Math.max(width - prefix.length - modeText.length - suffix.length - 2, 1);
-  console.log(
-    `${chalk.dim(prefix) + getModeLabel(mode)} ${chalk.dim("─".repeat(dashes) + suffix)}`,
-  );
+  return `${chalk.dim(prefix) + getModeLabel(mode)} ${chalk.dim("─".repeat(dashes) + suffix)}`;
+}
+
+function drawInputFrame(mode: ChatMode): void {
+  console.log(formatInputFrame(mode));
+}
+
+function redrawInputFrame(mode: ChatMode): void {
+  if (!process.stdout.isTTY) {
+    drawInputFrame(mode);
+    return;
+  }
+
+  process.stdout.write("\x1b[s");
+  readline.moveCursor(process.stdout, 0, -1);
+  readline.cursorTo(process.stdout, 0);
+  readline.clearLine(process.stdout, 0);
+  process.stdout.write(formatInputFrame(mode));
+  process.stdout.write("\x1b[u");
 }
 
 function displayWelcome(config: Config, provider: LLMProvider): void {
@@ -53,6 +69,220 @@ ${chalk.cyan("│")}                                              ${chalk.cyan("
 ${chalk.cyan("│")}  输入 ${chalk.yellow("/help")} 查看可用命令                     ${chalk.cyan("│")}
 ${chalk.cyan("╰──────────────────────────────────────────────╯")}
 `);
+}
+
+type SlashCommand = {
+  name: string;
+  desc: string;
+  aliases?: string[];
+  keywords?: string[];
+};
+
+export type SlashSuggestion = {
+  kind: "command" | "mode";
+  value: string;
+  description: string;
+  score: number;
+};
+
+export type SlashCompletion = {
+  start: number;
+  end: number;
+  replacement: string;
+};
+
+const MODES: ChatMode[] = ["normal", "auto", "plan", "edit"];
+
+const COMMANDS: SlashCommand[] = [
+  {
+    name: "help",
+    desc: "显示帮助信息",
+    aliases: ["?", "h"],
+    keywords: ["帮助", "命令", "说明", "查看命令"],
+  },
+  {
+    name: "model",
+    desc: "查看当前模型",
+    aliases: ["llm"],
+    keywords: ["模型", "当前模型", "model"],
+  },
+  {
+    name: "mode",
+    desc: "切换模式 (normal/auto/plan/edit)",
+    keywords: ["模式", "切换", "计划", "编辑", "自动"],
+  },
+  {
+    name: "clear",
+    desc: "清空对话历史",
+    aliases: ["cls"],
+    keywords: ["清空", "清除", "历史", "重置"],
+  },
+  {
+    name: "exit",
+    desc: "退出程序",
+    aliases: ["quit", "q"],
+    keywords: ["退出", "关闭", "结束"],
+  },
+];
+
+function scoreText(
+  target: string,
+  query: string,
+  exact: number,
+  prefix: number,
+  contains: number,
+): number {
+  if (!query) return 1;
+
+  const normalizedTarget = target.toLowerCase();
+  const normalizedQuery = query.toLowerCase();
+
+  if (normalizedTarget === normalizedQuery) return exact;
+  if (normalizedTarget.startsWith(normalizedQuery)) return prefix;
+  if (normalizedTarget.includes(normalizedQuery)) return contains;
+  return 0;
+}
+
+function scoreCommand(command: SlashCommand, query: string): number {
+  if (!query) return 1;
+
+  const scores = [
+    scoreText(command.name, query, 100, 90, 60),
+    scoreText(command.desc, query, 55, 45, 35),
+    ...(command.aliases ?? []).map((alias) => scoreText(alias, query, 95, 85, 55)),
+    ...(command.keywords ?? []).map((keyword) => scoreText(keyword, query, 80, 70, 50)),
+  ];
+
+  return Math.max(...scores);
+}
+
+function getCommandMatches(query: string): SlashSuggestion[] {
+  return COMMANDS.map((command) => ({
+    kind: "command" as const,
+    value: command.name,
+    description: command.desc,
+    score: scoreCommand(command, query),
+  }))
+    .filter((suggestion) => suggestion.score > 0)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        COMMANDS.findIndex((command) => command.name === a.value) -
+          COMMANDS.findIndex((command) => command.name === b.value),
+    );
+}
+
+function getModeMatches(query: string): SlashSuggestion[] {
+  return MODES.map((modeName) => ({
+    kind: "mode" as const,
+    value: modeName,
+    description: `切换到 ${modeName} 模式`,
+    score: scoreText(modeName, query, 100, 90, 60),
+  }))
+    .filter((suggestion) => suggestion.score > 0)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        MODES.indexOf(a.value as ChatMode) - MODES.indexOf(b.value as ChatMode),
+    );
+}
+
+function getUniqueCommand(query: string): SlashCommand | undefined {
+  const exact = COMMANDS.find(
+    (command) =>
+      command.name === query.toLowerCase() ||
+      (command.aliases ?? []).some((alias) => alias === query.toLowerCase()),
+  );
+
+  if (exact) return exact;
+
+  const prefixMatches = COMMANDS.filter((command) => command.name.startsWith(query.toLowerCase()));
+  return prefixMatches.length === 1 ? prefixMatches[0] : undefined;
+}
+
+function getCommonPrefix(values: string[]): string {
+  if (values.length === 0) return "";
+
+  let prefix = values[0];
+  for (const value of values.slice(1)) {
+    while (!value.startsWith(prefix) && prefix) {
+      prefix = prefix.slice(0, -1);
+    }
+  }
+
+  return prefix;
+}
+
+function getSafeCommonPrefix(values: string[]): string {
+  const prefix = getCommonPrefix(values);
+  if (values.length > 1 && values.includes(prefix)) {
+    return prefix.slice(0, -1);
+  }
+
+  return prefix;
+}
+
+export function getSlashCommandSuggestions(line: string): SlashSuggestion[] {
+  if (!line.startsWith("/")) return [];
+
+  const commandMatch = /^\/(\S*)(?:\s+(.*))?$/.exec(line);
+  if (!commandMatch) return [];
+
+  const commandQuery = commandMatch[1] ?? "";
+  const argQuery = commandMatch[2];
+  const command = getUniqueCommand(commandQuery);
+
+  if (command?.name === "mode" && argQuery !== undefined) {
+    return getModeMatches(argQuery);
+  }
+
+  return getCommandMatches(commandQuery);
+}
+
+export function getSlashCommandCompletion(line: string): SlashCompletion | null {
+  if (!line.startsWith("/")) return null;
+
+  const commandMatch = /^\/(\S*)(?:\s+(.*))?$/.exec(line);
+  if (!commandMatch) return null;
+
+  const commandQuery = commandMatch[1] ?? "";
+  const argQuery = commandMatch[2];
+  const command = getUniqueCommand(commandQuery);
+
+  if (command?.name === "mode" && argQuery !== undefined) {
+    const argStart = line.length - argQuery.length;
+    const matches = getModeMatches(argQuery);
+    if (matches.length === 1) {
+      return { start: argStart, end: line.length, replacement: matches[0].value };
+    }
+
+    const prefix = getCommonPrefix(matches.map((match) => match.value));
+    if (prefix.length > argQuery.length) {
+      return { start: argStart, end: line.length, replacement: prefix };
+    }
+
+    return null;
+  }
+
+  const matches = getCommandMatches(commandQuery);
+  if (matches.length === 0) return null;
+
+  if (matches.length === 1) {
+    return { start: 1, end: line.length, replacement: `${matches[0].value} ` };
+  }
+
+  const commandNameMatches = matches
+    .filter(
+      (match) => match.kind === "command" && match.value.startsWith(commandQuery.toLowerCase()),
+    )
+    .map((match) => match.value);
+  const prefix = getSafeCommonPrefix(commandNameMatches);
+
+  if (prefix.length > commandQuery.length) {
+    return { start: 1, end: line.length, replacement: prefix };
+  }
+
+  return null;
 }
 
 function handleSlashCommand(
@@ -191,6 +421,9 @@ function userConfirm(toolCall: LLMToolCall, rl: readline.Interface): Promise<boo
   });
 }
 
+const CHAT_PROMPT = chalk.dim("│ ") + chalk.cyan("❯ ");
+const SUGGESTION_LIMIT = 6;
+
 export async function startChat(config: Config): Promise<void> {
   if (!config.model?.apiKey) {
     console.error(chalk.red("API Key 未配置。请运行 code-agent init 初始化配置。"));
@@ -211,38 +444,155 @@ export async function startChat(config: Config): Promise<void> {
     prompt: "",
     terminal: true,
   });
+  readline.emitKeypressEvents(process.stdin, rl);
 
-  if (process.stdin.isTTY) {
+  if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
     process.stdin.setRawMode(true);
   }
 
-  process.stdin.prependListener(
-    "keypress",
-    (_str: string, key: { name?: string; ctrl?: boolean }) => {
-      if (key.name === "tab" || (key.name === "t" && key.ctrl)) {
-        cycleMode();
-        if (key.name === "tab") {
-          process.nextTick(() => rl.write(null, { name: "backspace" }));
-        }
-      }
-    },
-  );
+  let renderedSuggestionRows = 0;
 
-  function cycleMode(): void {
-    const modes: ChatMode[] = ["normal", "auto", "plan", "edit"];
-    const idx = modes.indexOf(mode);
-    mode = modes[(idx + 1) % modes.length];
-    drawInputFrame(mode);
-    rl.setPrompt(chalk.dim("│ ") + chalk.cyan("❯ "));
-    rl.prompt(true);
+  function setChatPrompt(): void {
+    rl.setPrompt(CHAT_PROMPT);
   }
 
+  function formatSuggestionRows(line: string): string[] {
+    if (!line.startsWith("/")) return [];
+
+    const suggestions = getSlashCommandSuggestions(line).slice(0, SUGGESTION_LIMIT);
+    const rows = [
+      `${chalk.dim("│ ")}${chalk.gray("命令建议")}${chalk.dim("  Tab 补全，继续输入可缩小范围")}`,
+    ];
+
+    if (suggestions.length === 0) {
+      rows.push(
+        `${chalk.dim("│   ")}${chalk.yellow("无匹配命令")}${chalk.dim("  输入 /help 查看全部命令")}`,
+      );
+      return rows;
+    }
+
+    for (const suggestion of suggestions) {
+      const label =
+        suggestion.kind === "command" ? `/${suggestion.value}` : `/mode ${suggestion.value}`;
+      rows.push(
+        `${chalk.dim("│   ")}${chalk.yellow(label.padEnd(14))}${chalk.gray(suggestion.description)}`,
+      );
+    }
+
+    return rows;
+  }
+
+  function updateSuggestionBlock(rows: string[]): void {
+    if (!process.stdout.isTTY) {
+      renderedSuggestionRows = 0;
+      return;
+    }
+
+    const rowCount = Math.max(renderedSuggestionRows, rows.length);
+    if (rowCount === 0) return;
+
+    process.stdout.write("\x1b[s");
+    for (let index = 0; index < rowCount; index++) {
+      readline.moveCursor(process.stdout, 0, 1);
+      readline.cursorTo(process.stdout, 0);
+      readline.clearLine(process.stdout, 0);
+      if (index < rows.length) {
+        process.stdout.write(rows[index]);
+      }
+    }
+    process.stdout.write("\x1b[u");
+
+    renderedSuggestionRows = rows.length;
+  }
+
+  function renderSuggestionBlock(): void {
+    updateSuggestionBlock(formatSuggestionRows(rl.line ?? ""));
+  }
+
+  function clearSuggestionBlock(): void {
+    updateSuggestionBlock([]);
+  }
+
+  function replaceInputRange(completion: SlashCompletion): boolean {
+    if (rl.cursor !== completion.end) return false;
+
+    for (let index = completion.end; index > completion.start; index--) {
+      rl.write(null, { name: "backspace" });
+    }
+    rl.write(completion.replacement);
+
+    return true;
+  }
+
+  function completeSlashInput(): boolean {
+    if (rl.cursor !== rl.line.length) return false;
+
+    const completion = getSlashCommandCompletion(rl.line);
+    return completion ? replaceInputRange(completion) : false;
+  }
+
+  function removeInsertedTab(lineBefore: string, cursorBefore: number): void {
+    const expectedLine = `${lineBefore.slice(0, cursorBefore)}\t${lineBefore.slice(cursorBefore)}`;
+    if (rl.line === expectedLine && rl.cursor === cursorBefore + 1) {
+      rl.write(null, { name: "backspace" });
+    }
+  }
+
+  function promptNextInput(): void {
+    clearSuggestionBlock();
+    drawInputFrame(mode);
+    setChatPrompt();
+    rl.prompt();
+    renderSuggestionBlock();
+  }
+
+  function cycleMode(): void {
+    const idx = MODES.indexOf(mode);
+    mode = MODES[(idx + 1) % MODES.length];
+    redrawInputFrame(mode);
+    setChatPrompt();
+    rl.prompt(true);
+    renderSuggestionBlock();
+  }
+
+  const onKeypress = (_str: string, key: { name?: string; ctrl?: boolean }) => {
+    if (key.name === "return" || key.name === "enter" || (key.ctrl && key.name === "c")) {
+      clearSuggestionBlock();
+      return;
+    }
+
+    if (key.name === "tab") {
+      const lineBefore = rl.line;
+      const cursorBefore = rl.cursor;
+
+      process.nextTick(() => {
+        removeInsertedTab(lineBefore, cursorBefore);
+        if (completeSlashInput()) {
+          renderSuggestionBlock();
+          return;
+        }
+        renderSuggestionBlock();
+      });
+      return;
+    }
+
+    if (key.name === "t" && key.ctrl) {
+      cycleMode();
+      return;
+    }
+
+    process.nextTick(() => {
+      renderSuggestionBlock();
+    });
+  };
+
+  process.stdin.prependListener("keypress", onKeypress);
+
   rl.on("line", async (input: string) => {
+    clearSuggestionBlock();
     const trimmed = input.trim();
     if (!trimmed) {
-      drawInputFrame(mode);
-      rl.setPrompt(chalk.dim("│ ") + chalk.cyan("❯ "));
-      rl.prompt();
+      promptNextInput();
       return;
     }
 
@@ -253,12 +603,10 @@ export async function startChat(config: Config): Promise<void> {
         config,
         setMode: (m) => {
           mode = m;
-          rl.setPrompt(chalk.dim("│ ") + chalk.cyan("❯ "));
+          setChatPrompt();
         },
       });
-      drawInputFrame(mode);
-      rl.setPrompt(chalk.dim("│ ") + chalk.cyan("❯ "));
-      rl.prompt();
+      promptNextInput();
       return;
     }
 
@@ -329,17 +677,15 @@ export async function startChat(config: Config): Promise<void> {
       displayError(error);
     }
 
-    drawInputFrame(mode);
-    rl.setPrompt(chalk.dim("│ ") + chalk.cyan("❯ "));
-    rl.prompt();
+    promptNextInput();
   });
 
-  drawInputFrame(mode);
-  rl.setPrompt(chalk.dim("│ ") + chalk.cyan("❯ "));
-  rl.prompt();
+  promptNextInput();
 
   rl.on("close", () => {
-    if (process.stdin.isTTY) {
+    process.stdin.removeListener("keypress", onKeypress);
+    clearSuggestionBlock();
+    if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
       process.stdin.setRawMode(false);
     }
     console.log();
