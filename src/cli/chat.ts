@@ -22,32 +22,11 @@ function getModeLabel(mode: ChatMode): string {
   return MODE_COLORS[mode](`[${mode}]`);
 }
 
-function drawBorderedBox(
-  label: string,
-  content: string,
-  contentColor: (text: string) => string,
-): void {
-  const lines = content.split("\n");
-  const maxContentWidth = Math.max(...lines.map((l) => l.length), label.length + 2);
-  const terminalWidth = process.stdout.columns - 6;
-  const width = Math.min(maxContentWidth, terminalWidth) + 4;
-
-  console.log(
-    `${chalk.dim("┌─ ") + label} ${chalk.dim(`${"─".repeat(Math.max(width - label.length - 4, 0))}┐`)}`,
-  );
-
-  for (const line of lines) {
-    const display = line.length > width - 4 ? line.slice(0, width - 4) : line;
-    const pad = " ".repeat(Math.max(width - 4 - display.length, 0));
-    console.log(chalk.dim("│ ") + contentColor(display) + pad + chalk.dim(" │"));
-  }
-
-  console.log(chalk.dim(`└${"─".repeat(Math.max(width - 2, 0))}┘`));
-}
-
 function drawUserMessage(content: string): void {
   if (!content.trim()) return;
-  drawBorderedBox("You", content, chalk.white);
+  for (const line of content.split("\n")) {
+    console.log(chalk.dim("│ ") + chalk.white(line));
+  }
 }
 
 function drawInputFrame(mode: ChatMode): void {
