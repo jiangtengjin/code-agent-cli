@@ -395,12 +395,15 @@ function displayError(error: unknown): void {
   }
 }
 
+type ConfirmToolCall = (toolCall: LLMToolCall) => Promise<boolean>;
+
 async function handleToolCalls(
   toolCalls: LLMToolCall[],
   toolRegistry: ToolRegistry,
   messages: LLMMessage[],
-  rl: readline.Interface,
   timing: TaskTimingStats,
+  skipConfirm: boolean,
+  confirmToolCall: ConfirmToolCall,
 ): Promise<void> {
   for (const toolCall of toolCalls) {
     timing.toolCalls++;
@@ -419,8 +422,8 @@ async function handleToolCalls(
     console.log(chalk.cyan(`\n─── 工具调用: ${tool.name} ───────────────────────`));
     console.log(chalk.gray(`参数: ${JSON.stringify(toolCall.args, null, 2)}`));
 
-    if (tool.requiresConfirm) {
-      const confirmed = await userConfirm(toolCall, rl);
+    if (tool.requiresConfirm && !skipConfirm) {
+      const confirmed = await confirmToolCall(toolCall);
       if (!confirmed) {
         console.log(chalk.yellow("用户取消操作"));
         messages.push({
@@ -472,6 +475,87 @@ function userConfirm(toolCall: LLMToolCall, rl: readline.Interface): Promise<boo
 
 const CHAT_PROMPT = chalk.dim("│ ") + chalk.cyan("❯ ");
 const SUGGESTION_LIMIT = 6;
+
+export async function runPrompt(config: Config, prompt: string): Promise<void> {
+  if (!config.model?.apiKey) {
+    console.error(chalk.red("API Key is not configured. Run code-agent init first."));
+    process.exit(1);
+    return;
+  }
+
+  const provider = createProviderFromConfig(config);
+  const toolRegistry = createDefaultToolRegistry();
+  const messages: LLMMessage[] = [{ role: "user", content: prompt }];
+  const timing = createTaskTiming();
+
+  try {
+    const maxIterations = 50;
+    let iteration = 0;
+
+    while (iteration < maxIterations) {
+      iteration++;
+      timing.iterations = iteration;
+
+      const thinkingStartedAt = nowMs();
+      const response = await provider
+        .chat({
+          messages: [...messages],
+          systemPrompt: config.systemPrompt,
+          tools: toolRegistry.getToolDefinitions(),
+        })
+        .finally(() => {
+          timing.thinkingMs += elapsedSince(thinkingStartedAt);
+        });
+
+      if (response.toolCalls && response.toolCalls.length > 0) {
+        messages.push({
+          role: "assistant",
+          content: response.content || null,
+          toolCalls: response.toolCalls.map((tc) => ({
+            id: tc.id,
+            type: "function" as const,
+            function: {
+              name: tc.name,
+              arguments: JSON.stringify(tc.args),
+            },
+          })),
+        });
+        await handleToolCalls(
+          response.toolCalls,
+          toolRegistry,
+          messages,
+          timing,
+          Boolean(config.yolo),
+          async () => false,
+        );
+        continue;
+      }
+
+      if (response.content) {
+        messages.push({ role: "assistant", content: response.content });
+        console.log(response.content);
+      }
+
+      if (response.usage) {
+        console.log(
+          chalk.gray(
+            `Token: 杈撳叆 ${response.usage.promptTokens} / 杈撳嚭 ${response.usage.completionTokens}`,
+          ),
+        );
+      }
+
+      break;
+    }
+
+    if (iteration >= maxIterations) {
+      console.log(chalk.yellow("\nReached max execution steps; the task may be incomplete."));
+    }
+  } catch (error) {
+    displayError(error);
+  }
+
+  console.log(chalk.gray(formatTaskTiming(timing)));
+}
 
 export async function startChat(config: Config): Promise<void> {
   if (!config.model?.apiKey) {
@@ -680,7 +764,7 @@ export async function startChat(config: Config): Promise<void> {
         const thinkingStartedAt = nowMs();
         const response = await provider
           .chat({
-            messages,
+            messages: [...messages],
             systemPrompt: config.systemPrompt,
             tools: toolRegistry.getToolDefinitions(),
           })
@@ -703,7 +787,14 @@ export async function startChat(config: Config): Promise<void> {
               },
             })),
           });
-          await handleToolCalls(response.toolCalls, toolRegistry, messages, rl, timing);
+          await handleToolCalls(
+            response.toolCalls,
+            toolRegistry,
+            messages,
+            timing,
+            Boolean(config.yolo),
+            (toolCall) => userConfirm(toolCall, rl),
+          );
           continue;
         }
 

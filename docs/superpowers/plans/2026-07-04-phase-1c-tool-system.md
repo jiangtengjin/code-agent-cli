@@ -54,7 +54,7 @@
 - Consumes: 无
 - Produces: `ToolRegistry` class, `ToolDefinition` interface, `ToolResult` interface
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // tests/unit/tools/registry.test.ts
@@ -149,12 +149,12 @@ describe('ToolRegistry', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm test tests/unit/tools/registry.test.ts`
 Expected: FAIL with "Cannot find module '../../../src/tools/registry.js'"
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```typescript
 // src/types/tool.ts
@@ -228,12 +228,12 @@ export type { ToolDefinition, ToolResult, ToolCall } from './tool.js'
 // ... 其他现有导出
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm test tests/unit/tools/registry.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/types/tool.ts src/tools/registry.ts src/types/index.ts tests/unit/tools/registry.test.ts
@@ -252,7 +252,7 @@ git commit -m "feat: implement ToolRegistry with TDD"
 - Consumes: `ToolDefinition` from Task 1
 - Produces: `readFileTool` constant
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // tests/unit/tools/file.test.ts
@@ -319,12 +319,12 @@ describe('read_file tool', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm test tests/unit/tools/file.test.ts`
 Expected: FAIL with "Cannot find module '../../../src/tools/built-in/file.js'"
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```typescript
 // src/tools/built-in/file.ts
@@ -382,12 +382,12 @@ export const readFileTool: ToolDefinition = {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm test tests/unit/tools/file.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/tools/built-in/file.ts tests/unit/tools/file.test.ts
@@ -407,7 +407,7 @@ git commit -m "feat: implement read_file tool with TDD"
 - Consumes: `ToolDefinition` from Task 1
 - Produces: `editFileTool` constant, `generateDiff` function
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // 在tests/unit/tools/file.test.ts中添加
@@ -462,12 +462,12 @@ describe('edit_file tool', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm test tests/unit/tools/file.test.ts`
 Expected: FAIL with "editFileTool is not defined"
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```typescript
 // src/utils/diff.ts
@@ -557,12 +557,12 @@ export const editFileTool: ToolDefinition = {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm test tests/unit/tools/file.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/tools/built-in/file.ts src/utils/diff.ts tests/unit/tools/file.test.ts
@@ -581,7 +581,7 @@ git commit -m "feat: implement edit_file tool with TDD"
 - Consumes: `ToolDefinition` from Task 1
 - Produces: `writeFileTool`, `createFileTool`, `deleteFileTool`, `listDirTool` constants
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // 在tests/unit/tools/file.test.ts中添加
@@ -705,12 +705,12 @@ describe('list_dir tool', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm test tests/unit/tools/file.test.ts`
 Expected: FAIL with "writeFileTool is not defined"
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```typescript
 // 在src/tools/built-in/file.ts中添加
@@ -873,12 +873,12 @@ export const listDirTool: ToolDefinition = {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm test tests/unit/tools/file.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/tools/built-in/file.ts tests/unit/tools/file.test.ts
@@ -898,7 +898,7 @@ git commit -m "feat: implement write_file, create_file, delete_file, list_dir to
 - Consumes: `ToolDefinition` from Task 1
 - Produces: `globSearchTool`, `grepSearchTool` constants
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // tests/unit/tools/search.test.ts
@@ -971,12 +971,12 @@ describe('grep_search tool', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm test tests/unit/tools/search.test.ts`
 Expected: FAIL with "Cannot find module '../../../src/tools/built-in/search.js'"
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```typescript
 // src/utils/grep.ts
@@ -1152,12 +1152,12 @@ export const grepSearchTool: ToolDefinition = {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm test tests/unit/tools/search.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/tools/built-in/search.ts src/utils/grep.ts tests/unit/tools/search.test.ts
@@ -1176,7 +1176,7 @@ git commit -m "feat: implement glob_search and grep_search tools with TDD"
 - Consumes: `ToolRegistry` from Task 1, all tools from Tasks 2-5
 - Produces: 集成到chat.ts的工具调用机制
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // tests/unit/tools/integration.test.ts
@@ -1207,12 +1207,12 @@ describe('工具集成', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm test tests/unit/tools/integration.test.ts`
 Expected: FAIL with "Cannot find module '../../../src/tools/built-in/index.js'"
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```typescript
 // src/tools/built-in/index.ts
@@ -1244,12 +1244,12 @@ export function createDefaultToolRegistry(): ToolRegistry {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm test tests/unit/tools/integration.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/tools/built-in/index.ts tests/unit/tools/integration.test.ts
@@ -1268,7 +1268,7 @@ git commit -m "feat: create default tool registry with all built-in tools"
 - Consumes: 无
 - Produces: `isSensitivePath`, `requiresExtraConfirm`, `isDangerousCommand` functions
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // tests/unit/utils/security.test.ts
@@ -1323,12 +1323,12 @@ describe('安全工具函数', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm test tests/unit/utils/security.test.ts`
 Expected: FAIL with "Cannot find module '../../../src/utils/security.js'"
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```typescript
 // src/utils/security.ts
@@ -1370,12 +1370,12 @@ export function isDangerousCommand(command: string): boolean {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm test tests/unit/utils/security.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/utils/security.ts tests/unit/utils/security.test.ts
@@ -1393,7 +1393,7 @@ git commit -m "feat: implement security utilities with TDD"
 - Consumes: `ToolRegistry` from Task 1, `createDefaultToolRegistry` from Task 6
 - Produces: 集成工具调用的chat.ts
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // tests/unit/cli/chat-integration.test.ts
@@ -1418,12 +1418,12 @@ describe('chat集成', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm test tests/unit/cli/chat-integration.test.ts`
 Expected: FAIL (如果测试文件不存在)
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```typescript
 // 在src/cli/chat.ts中修改
@@ -1531,12 +1531,12 @@ async function handleToolCalls(
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm test tests/unit/cli/chat-integration.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/cli/chat.ts tests/unit/cli/chat-integration.test.ts
@@ -1554,31 +1554,31 @@ git commit -m "feat: integrate tool calling mechanism into chat"
 - Consumes: 所有之前的任务
 - Produces: 完整的测试通过
 
-- [ ] **Step 1: 运行所有测试**
+- [x] **Step 1: 运行所有测试**
 
 Run: `pnpm test`
 Expected: 所有测试通过
 
-- [ ] **Step 2: 运行代码检查**
+- [x] **Step 2: 运行代码检查**
 
 Run: `pnpm lint`
 Expected: 无错误
 
-- [ ] **Step 3: 运行类型检查**
+- [x] **Step 3: 运行类型检查**
 
 Run: `pnpm typecheck`
 Expected: 无错误
 
-- [ ] **Step 4: 代码自审**
+- [x] **Step 4: 代码自审**
 
 检查清单：
-- [ ] 所有工具都有单元测试
-- [ ] 错误处理完整
-- [ ] 安全机制已实现
-- [ ] 代码符合项目规范
-- [ ] 文档已更新
+- [x] 所有工具都有单元测试
+- [x] 错误处理完整
+- [x] 安全机制已实现
+- [x] 代码符合项目规范
+- [x] 文档已更新
 
-- [ ] **Step 5: 最终提交**
+- [x] **Step 5: 最终提交**
 
 ```bash
 git add .

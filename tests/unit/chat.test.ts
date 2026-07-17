@@ -1,4 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import * as fs from 'node:fs/promises'
+import * as os from 'node:os'
+import * as path from 'node:path'
+
+const providerMocks = vi.hoisted(() => ({
+  chat: vi.fn(),
+}))
 
 const mockRl = {
   prompt: vi.fn(),
@@ -6,6 +13,7 @@ const mockRl = {
   on: vi.fn(),
   setPrompt: vi.fn(),
   write: vi.fn(),
+  question: vi.fn(),
 }
 
 vi.mock('node:readline', () => ({
@@ -21,6 +29,13 @@ vi.mock('chalk', () => ({
   cyan: (s: string) => s,
   gray: (s: string) => s,
   bold: (s: string) => s,
+}))
+
+vi.mock('../../src/llm/registry.js', () => ({
+  createProviderFromConfig: vi.fn(() => ({
+    name: 'mock-provider',
+    chat: providerMocks.chat,
+  })),
 }))
 
 describe('slash command suggestions', () => {
@@ -94,9 +109,52 @@ describe('task timing', () => {
   })
 })
 
-describe('startChat', () => {
+describe('runPrompt', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    providerMocks.chat.mockResolvedValue({ content: 'single reply', model: 'test' })
+  })
+
+  it('sends the prompt as a user message and prints the response', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { runPrompt } = await import('../../src/cli/chat.js')
+
+    await runPrompt(
+      {
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      } as any,
+      'hello from prompt',
+    )
+
+    expect(providerMocks.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [{ role: 'user', content: 'hello from prompt' }],
+        tools: expect.any(Array),
+      }),
+    )
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('single reply'))
+    expect(mockRl.on).not.toHaveBeenCalled()
+
+    logSpy.mockRestore()
+  })
+})
+
+describe('startChat', () => {
+  let tempDirs: string[] = []
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    providerMocks.chat.mockResolvedValue({ content: 'mock reply', model: 'test' })
+    mockRl.question.mockImplementation((_question: string, cb: (answer: string) => void) => {
+      cb('n')
+    })
+    tempDirs = []
+  })
+
+  afterEach(async () => {
+    for (const tempDir of tempDirs) {
+      await fs.rm(tempDir, { recursive: true, force: true })
+    }
   })
 
   it('exits if no apiKey configured', async () => {
@@ -189,6 +247,45 @@ describe('startChat', () => {
 
     // User message should render with a left bar
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('hello'))
+
+    logSpy.mockRestore()
+  })
+
+  it('skips tool confirmation when yolo is enabled', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-yolo-'))
+    tempDirs.push(tempDir)
+    const filePath = path.join(tempDir, 'created.txt')
+
+    providerMocks.chat
+      .mockResolvedValueOnce({
+        content: '',
+        model: 'test',
+        toolCalls: [
+          {
+            id: 'call-1',
+            name: 'write_file',
+            args: { path: filePath, content: 'created by yolo' },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ content: 'done', model: 'test' })
+
+    const { startChat } = await import('../../src/cli/chat.js')
+    const lineCallbacks: Array<(input: string) => Promise<void> | void> = []
+    mockRl.on.mockImplementation((_event: string, cb: (input: string) => Promise<void> | void) => {
+      lineCallbacks.push(cb)
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      yolo: true,
+    } as any)
+
+    await lineCallbacks[0]('create a file')
+
+    await expect(fs.readFile(filePath, 'utf-8')).resolves.toBe('created by yolo')
+    expect(mockRl.question).not.toHaveBeenCalled()
 
     logSpy.mockRestore()
   })
