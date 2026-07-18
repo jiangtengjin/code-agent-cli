@@ -19,13 +19,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "chalk": "^5.3.0",
     "commander": "^12.0.0",
     "glob": "^13.0.6",
     "jsonc-parser": "^3.3.0",
     "micromatch": "^4.0.8",
     "ora": "^9.4.1",
-    "zod": "^3.23.0"
+    "zod": "^3.25.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
