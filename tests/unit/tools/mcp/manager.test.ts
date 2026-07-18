@@ -34,6 +34,14 @@ class FakeMCPClient {
   }
 }
 
+function createMCPTool(name: string, description = `Tool ${name}`): MCPToolDefinition {
+  return {
+    name,
+    description,
+    inputSchema: { type: "object", properties: {} },
+  };
+}
+
 describe("buildMCPRegistryToolName", () => {
   it("prefixes server and tool names for registry use", () => {
     expect(buildMCPRegistryToolName("filesystem", "read_file")).toBe(
@@ -176,6 +184,115 @@ describe("MCPServerManager", () => {
 
     expect(clients.one.closed).toBe(true);
     expect(clients.two.closed).toBe(true);
+  });
+
+  it("does not create another client when startAll is called for an already-started server", async () => {
+    const registry = new ToolRegistry();
+    const warnings: string[] = [];
+    const clients: FakeMCPClient[] = [];
+
+    const manager = new MCPServerManager(
+      { filesystem: { command: "node", args: ["server.js"] } },
+      registry,
+      {
+        createClient: () => {
+          const client = new FakeMCPClient([createMCPTool("lookup")]);
+          clients.push(client);
+          return client;
+        },
+        onWarning: (message: string) => warnings.push(message),
+      },
+    );
+
+    await manager.startAll();
+    await manager.startAll();
+
+    expect(clients).toHaveLength(1);
+    expect(clients[0].connected).toBe(true);
+    expect(manager.getSummary()).toEqual({ servers: 1, tools: 1 });
+    expect(registry.list()).toEqual(["mcp_filesystem_lookup"]);
+    expect(warnings.join("\n")).toContain("filesystem");
+    expect(warnings.join("\n")).toContain("already started");
+
+    await manager.stopAll();
+
+    expect(clients[0].closed).toBe(true);
+  });
+
+  it("warns and skips normalized tool-name collisions without overwriting earlier tools", async () => {
+    const registry = new ToolRegistry();
+    const warnings: string[] = [];
+    const client = new FakeMCPClient([
+      createMCPTool("a.b", "Dotted tool"),
+      createMCPTool("a_b", "Underscore tool"),
+    ]);
+
+    const manager = new MCPServerManager(
+      { filesystem: { command: "node", args: ["server.js"] } },
+      registry,
+      {
+        createClient: () => client,
+        onWarning: (message: string) => warnings.push(message),
+      },
+    );
+
+    await manager.startAll();
+
+    expect(registry.list()).toEqual(["mcp_filesystem_a_b"]);
+    expect(manager.getSummary()).toEqual({ servers: 1, tools: 1 });
+    expect(warnings.join("\n")).toContain("mcp_filesystem_a_b");
+    expect(warnings.join("\n")).toContain("a_b");
+
+    await registry.get("mcp_filesystem_a_b")?.execute({ query: "value" });
+
+    expect(client.callToolCalls).toEqual([{ name: "a.b", args: { query: "value" } }]);
+  });
+
+  it("unregisters MCP tools and resets summary when stopped", async () => {
+    const registry = new ToolRegistry();
+    const client = new FakeMCPClient([createMCPTool("lookup")]);
+    const manager = new MCPServerManager(
+      { filesystem: { command: "node", args: ["server.js"] } },
+      registry,
+      { createClient: () => client },
+    );
+
+    await manager.startAll();
+    expect(registry.has("mcp_filesystem_lookup")).toBe(true);
+
+    await manager.stopAll();
+
+    expect(client.closed).toBe(true);
+    expect(manager.getSummary()).toEqual({ servers: 0, tools: 0 });
+    expect(registry.has("mcp_filesystem_lookup")).toBe(false);
+    expect(registry.get("mcp_filesystem_lookup")).toBeUndefined();
+  });
+
+  it("closes a connected client and leaves no tools when listTools fails", async () => {
+    const registry = new ToolRegistry();
+    const warnings: string[] = [];
+    const client = new FakeMCPClient([createMCPTool("lookup")]);
+    client.listTools = async () => {
+      throw new Error("list failed");
+    };
+
+    const manager = new MCPServerManager(
+      { filesystem: { command: "node", args: ["server.js"] } },
+      registry,
+      {
+        createClient: () => client,
+        onWarning: (message: string) => warnings.push(message),
+      },
+    );
+
+    await manager.startAll();
+
+    expect(client.connected).toBe(true);
+    expect(client.closed).toBe(true);
+    expect(warnings.join("\n")).toContain("filesystem");
+    expect(warnings.join("\n")).toContain("list failed");
+    expect(manager.getSummary()).toEqual({ servers: 0, tools: 0 });
+    expect(registry.list()).toEqual([]);
   });
 
   it("joins multiple text content parts with newlines", async () => {
