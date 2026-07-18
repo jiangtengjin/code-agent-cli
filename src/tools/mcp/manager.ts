@@ -16,7 +16,12 @@ export interface MCPSummary {
 
 interface StartedMCPServer {
   client: MCPClientLike;
-  registeredToolNames: string[];
+  registeredTools: RegisteredMCPTool[];
+}
+
+interface RegisteredMCPTool {
+  name: string;
+  definition: ToolDefinition;
 }
 
 const DEFAULT_OBJECT_SCHEMA: Record<string, unknown> = {
@@ -79,7 +84,7 @@ export class MCPServerManager {
   private readonly createClient: (serverName: string, config: MCPServerConfig) => MCPClientLike;
   private readonly onWarning?: (message: string) => void;
   private readonly startedServers = new Map<string, StartedMCPServer>();
-  private readonly registeredToolNames = new Set<string>();
+  private readonly registeredTools = new Map<string, ToolDefinition>();
 
   constructor(
     config: Record<string, MCPServerConfig> | undefined,
@@ -120,10 +125,7 @@ export class MCPServerManager {
         this.warn(`Failed to close MCP server "${serverName}": ${formatError(error)}`);
       }
 
-      for (const toolName of startedServer.registeredToolNames) {
-        this.registry.unregister(toolName);
-        this.registeredToolNames.delete(toolName);
-      }
+      this.cleanupRegisteredTools(startedServer.registeredTools);
     }
 
     this.startedServers.clear();
@@ -132,30 +134,31 @@ export class MCPServerManager {
   getSummary(): MCPSummary {
     return {
       servers: this.startedServers.size,
-      tools: this.registeredToolNames.size,
+      tools: this.registeredTools.size,
     };
   }
 
   private async startServer(serverName: string, serverConfig: MCPServerConfig): Promise<void> {
     let client: MCPClientLike | undefined;
+    const registeredTools: RegisteredMCPTool[] = [];
 
     try {
       client = this.createClient(serverName, serverConfig);
       await client.connect();
 
       const tools = await client.listTools();
-      const registeredToolNames: string[] = [];
       for (const tool of tools) {
-        const registeredToolName = this.registerMCPTool(serverName, client, tool);
+        const registeredTool = this.registerMCPTool(serverName, client, tool);
 
-        if (registeredToolName !== undefined) {
-          registeredToolNames.push(registeredToolName);
+        if (registeredTool !== undefined) {
+          registeredTools.push(registeredTool);
         }
       }
 
-      this.startedServers.set(serverName, { client, registeredToolNames });
+      this.startedServers.set(serverName, { client, registeredTools });
     } catch (error) {
       this.warn(`Failed to start MCP server "${serverName}": ${formatError(error)}`);
+      this.cleanupRegisteredTools(registeredTools);
 
       if (client !== undefined) {
         await this.closeAfterStartFailure(serverName, client);
@@ -167,7 +170,7 @@ export class MCPServerManager {
     serverName: string,
     client: MCPClientLike,
     tool: MCPToolDefinition,
-  ): string | undefined {
+  ): RegisteredMCPTool | undefined {
     const registryToolName = buildMCPRegistryToolName(serverName, tool.name);
 
     if (this.registry.has(registryToolName)) {
@@ -186,9 +189,12 @@ export class MCPServerManager {
     };
 
     this.registry.register(toolDefinition);
-    this.registeredToolNames.add(registryToolName);
+    this.registeredTools.set(registryToolName, toolDefinition);
 
-    return registryToolName;
+    return {
+      name: registryToolName,
+      definition: toolDefinition,
+    };
   }
 
   private async executeMCPTool(
@@ -226,6 +232,16 @@ export class MCPServerManager {
       this.warn(
         `Failed to close MCP server "${serverName}" after startup error: ${formatError(error)}`,
       );
+    }
+  }
+
+  private cleanupRegisteredTools(registeredTools: RegisteredMCPTool[]): void {
+    for (const registeredTool of registeredTools) {
+      if (this.registry.get(registeredTool.name) === registeredTool.definition) {
+        this.registry.unregister(registeredTool.name);
+      }
+
+      this.registeredTools.delete(registeredTool.name);
     }
   }
 

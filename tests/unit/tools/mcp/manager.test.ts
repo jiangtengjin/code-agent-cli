@@ -4,6 +4,7 @@ import {
   buildMCPRegistryToolName,
 } from "../../../../src/tools/mcp/manager.js";
 import { ToolRegistry } from "../../../../src/tools/registry.js";
+import type { ToolDefinition } from "../../../../src/types/tool.js";
 import type { MCPCallToolResult, MCPToolDefinition } from "../../../../src/types/mcp.js";
 
 class FakeMCPClient {
@@ -40,6 +41,29 @@ function createMCPTool(name: string, description = `Tool ${name}`): MCPToolDefin
     description,
     inputSchema: { type: "object", properties: {} },
   };
+}
+
+function createRegistryTool(name: string, data = "replacement result"): ToolDefinition {
+  return {
+    name,
+    description: "Replacement tool",
+    parameters: { type: "object", properties: {} },
+    execute: async () => ({ success: true, data }),
+  };
+}
+
+class FailingSecondRegisterToolRegistry extends ToolRegistry {
+  registerCalls = 0;
+
+  override register(tool: ToolDefinition): void {
+    this.registerCalls += 1;
+
+    if (this.registerCalls === 2) {
+      throw new Error("register failed");
+    }
+
+    super.register(tool);
+  }
 }
 
 describe("buildMCPRegistryToolName", () => {
@@ -266,6 +290,53 @@ describe("MCPServerManager", () => {
     expect(manager.getSummary()).toEqual({ servers: 0, tools: 0 });
     expect(registry.has("mcp_filesystem_lookup")).toBe(false);
     expect(registry.get("mcp_filesystem_lookup")).toBeUndefined();
+  });
+
+  it("does not unregister a replacement tool with the same name when stopped", async () => {
+    const registry = new ToolRegistry();
+    const client = new FakeMCPClient([createMCPTool("lookup")]);
+    const manager = new MCPServerManager(
+      { filesystem: { command: "node", args: ["server.js"] } },
+      registry,
+      { createClient: () => client },
+    );
+
+    await manager.startAll();
+
+    const toolName = "mcp_filesystem_lookup";
+    const mcpTool = registry.get(toolName);
+    const replacementTool = createRegistryTool(toolName);
+    registry.register(replacementTool);
+
+    await manager.stopAll();
+
+    expect(mcpTool).toBeDefined();
+    expect(client.closed).toBe(true);
+    expect(manager.getSummary()).toEqual({ servers: 0, tools: 0 });
+    expect(registry.get(toolName)).toBe(replacementTool);
+  });
+
+  it("rolls back owned MCP tools when startup fails during registration", async () => {
+    const registry = new FailingSecondRegisterToolRegistry();
+    const warnings: string[] = [];
+    const client = new FakeMCPClient([createMCPTool("first"), createMCPTool("second")]);
+    const manager = new MCPServerManager(
+      { filesystem: { command: "node", args: ["server.js"] } },
+      registry,
+      {
+        createClient: () => client,
+        onWarning: (message: string) => warnings.push(message),
+      },
+    );
+
+    await manager.startAll();
+
+    expect(registry.registerCalls).toBe(2);
+    expect(client.connected).toBe(true);
+    expect(client.closed).toBe(true);
+    expect(warnings.join("\n")).toContain("register failed");
+    expect(manager.getSummary()).toEqual({ servers: 0, tools: 0 });
+    expect(registry.list()).toEqual([]);
   });
 
   it("closes a connected client and leaves no tools when listTools fails", async () => {
