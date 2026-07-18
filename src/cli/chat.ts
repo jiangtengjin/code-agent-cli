@@ -536,7 +536,7 @@ export async function startChat(config: Config): Promise<void> {
     }
 
     if (!shutdownPromise) {
-      shutdownPromise = (async () => {
+      shutdownPromise = Promise.resolve().then(async () => {
         if (keypressListenerAttached && cleanupHooks.keypressListener) {
           try {
             process.stdin.removeListener("keypress", cleanupHooks.keypressListener);
@@ -590,7 +590,7 @@ export async function startChat(config: Config): Promise<void> {
         } catch (error) {
           logCleanupError("MCP shutdown", error);
         }
-      })();
+      });
     }
 
     await shutdownPromise;

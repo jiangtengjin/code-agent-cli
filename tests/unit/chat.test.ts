@@ -330,6 +330,9 @@ describe('startChat', () => {
     mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
       callbacks[event] = cb
     })
+    mockRl.close.mockImplementation(() => {
+      void callbacks.close?.()
+    })
     const { startChat } = await import('../../src/cli/chat.js')
 
     await startChat({
@@ -343,10 +346,11 @@ describe('startChat', () => {
 
     const instance = mcpManagerMocks.instances[0]
     expect(instance.stopAll).toHaveBeenCalledTimes(1)
-    expect(exitSpy).toHaveBeenCalledWith(0)
     expect(instance.stopAll.mock.invocationCallOrder[0]).toBeLessThan(
       exitSpy.mock.invocationCallOrder[0],
     )
+    expect(exitSpy).toHaveBeenCalledWith(0)
+    expect(mockRl.close).toHaveBeenCalledTimes(1)
 
     logSpy.mockRestore()
     exitSpy.mockRestore()
