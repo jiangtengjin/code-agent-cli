@@ -316,6 +316,7 @@ describe('startChat', () => {
     await callbacks.close()
 
     expect(mcpManagerMocks.instances[0].stopAll).toHaveBeenCalledTimes(1)
+    expect(mockRl.close).not.toHaveBeenCalled()
     expect(exitSpy).toHaveBeenCalledWith(0)
 
     logSpy.mockRestore()
@@ -371,6 +372,7 @@ describe('startChat', () => {
     const instance = mcpManagerMocks.instances[0]
     expect(instance.startAll).toHaveBeenCalledTimes(1)
     expect(instance.stopAll).toHaveBeenCalledTimes(1)
+    expect(mockRl.close).toHaveBeenCalledTimes(1)
     expect(instance.stopAll.mock.invocationCallOrder[0]).toBeGreaterThan(
       instance.startAll.mock.invocationCallOrder[0],
     )

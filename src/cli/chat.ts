@@ -509,7 +509,13 @@ export async function startChat(config: Config): Promise<void> {
   const cleanupHooks: {
     clearSuggestionBlock?: () => void;
     keypressListener?: KeypressListener;
-  } = {};
+    readline?: readline.Interface;
+    readlineClosing: boolean;
+    readlineClosed: boolean;
+  } = {
+    readlineClosing: false,
+    readlineClosed: false,
+  };
   let renderedSuggestionRows = 0;
   let keypressListenerAttached = false;
   let rawModeEnabled = false;
@@ -563,6 +569,22 @@ export async function startChat(config: Config): Promise<void> {
           }
         }
 
+        if (
+          cleanupHooks.readline &&
+          !cleanupHooks.readlineClosed &&
+          !cleanupHooks.readlineClosing
+        ) {
+          cleanupHooks.readlineClosing = true;
+          try {
+            cleanupHooks.readline.close();
+          } catch (error) {
+            logCleanupError("readline close", error);
+          } finally {
+            cleanupHooks.readlineClosed = true;
+            cleanupHooks.readlineClosing = false;
+          }
+        }
+
         try {
           await mcpManager.stopAll();
         } catch (error) {
@@ -580,9 +602,9 @@ export async function startChat(config: Config): Promise<void> {
     }
   }
 
-  async function runSetup<T>(operation: () => T): Promise<T> {
+  async function runSetup<T>(operation: () => T | Promise<T>): Promise<T> {
     try {
-      return operation();
+      return await operation();
     } catch (error) {
       await shutdown();
       throw error;
@@ -600,6 +622,7 @@ export async function startChat(config: Config): Promise<void> {
       terminal: true,
     }),
   );
+  cleanupHooks.readline = rl;
   await runSetup(() => readline.emitKeypressEvents(process.stdin, rl));
 
   if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
@@ -843,6 +866,8 @@ export async function startChat(config: Config): Promise<void> {
 
   await runSetup(() => {
     rl.on("close", async () => {
+      cleanupHooks.readlineClosed = true;
+      cleanupHooks.readlineClosing = false;
       await shutdown({ exit: true, exitCode: 0 });
     });
   });
