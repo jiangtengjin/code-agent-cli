@@ -7,6 +7,20 @@ const providerMocks = vi.hoisted(() => ({
   chat: vi.fn(),
 }))
 
+const spinnerMocks = vi.hoisted(() => {
+  const spinner = {
+    text: '',
+    start: vi.fn(() => spinner),
+    stop: vi.fn(() => spinner),
+  }
+  const ora = vi.fn((options?: { text?: string }) => {
+    spinner.text = options?.text ?? ''
+    return spinner
+  })
+
+  return { ora, spinner }
+})
+
 const mockRl = {
   prompt: vi.fn(),
   close: vi.fn(),
@@ -19,6 +33,10 @@ const mockRl = {
 vi.mock('node:readline', () => ({
   createInterface: vi.fn(() => mockRl),
   emitKeypressEvents: vi.fn(),
+}))
+
+vi.mock('ora', () => ({
+  default: spinnerMocks.ora,
 }))
 
 vi.mock('chalk', () => ({
@@ -158,6 +176,7 @@ describe('startChat', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    spinnerMocks.spinner.text = ''
     providerMocks.chat.mockResolvedValue({ content: 'mock reply', model: 'test' })
     mockRl.question.mockImplementation((_question: string, cb: (answer: string) => void) => {
       cb('n')
@@ -265,6 +284,63 @@ describe('startChat', () => {
     logSpy.mockRestore()
   })
 
+  it('stops the spinner when mode execution returns without assistant output', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({
+      content: '',
+      model: 'test',
+      usage: { promptTokens: 1, completionTokens: 0, totalTokens: 1 },
+    })
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    const lineCallbacks: Array<(input: string) => Promise<void> | void> = []
+    mockRl.on.mockImplementation((_event: string, cb: (input: string) => Promise<void> | void) => {
+      lineCallbacks.push(cb)
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+    } as any)
+
+    await lineCallbacks[0]('empty response')
+
+    expect(spinnerMocks.spinner.stop).toHaveBeenCalled()
+
+    logSpy.mockRestore()
+  })
+
+  it('stops the spinner before printing token usage', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({
+      content: '',
+      model: 'test',
+      usage: { promptTokens: 1, completionTokens: 0, totalTokens: 1 },
+    })
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    const lineCallbacks: Array<(input: string) => Promise<void> | void> = []
+    mockRl.on.mockImplementation((_event: string, cb: (input: string) => Promise<void> | void) => {
+      lineCallbacks.push(cb)
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+    } as any)
+
+    await lineCallbacks[0]('usage response')
+
+    const firstStopOrder = spinnerMocks.spinner.stop.mock.invocationCallOrder[0]
+    const tokenLogCall = logSpy.mock.calls.find(([message]) =>
+      String(message).includes('Token: input 1 / output 0'),
+    )
+    expect(tokenLogCall).toBeDefined()
+    const tokenLogOrder =
+      logSpy.mock.invocationCallOrder[logSpy.mock.calls.indexOf(tokenLogCall as [unknown])]
+    expect(firstStopOrder).toBeLessThan(tokenLogOrder)
+
+    logSpy.mockRestore()
+  })
+
   it('skips tool confirmation when yolo is enabled', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-yolo-'))
@@ -327,6 +403,43 @@ describe('startChat', () => {
 
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Total tokens: 18'))
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('LLM calls: 1'))
+
+    logSpy.mockRestore()
+  })
+
+  it('keeps cumulative token usage after /clear', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat
+      .mockResolvedValueOnce({
+        content: 'first reply',
+        model: 'test',
+        usage: { promptTokens: 2, completionTokens: 3, totalTokens: 5 },
+      })
+      .mockResolvedValueOnce({
+        content: 'second reply',
+        model: 'test',
+        usage: { promptTokens: 4, completionTokens: 6, totalTokens: 10 },
+      })
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    const lineCallbacks: Array<(input: string) => Promise<void> | void> = []
+    mockRl.on.mockImplementation((_event: string, cb: (input: string) => Promise<void> | void) => {
+      lineCallbacks.push(cb)
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+    } as any)
+
+    await lineCallbacks[0]('first')
+    await lineCallbacks[0]('/clear')
+    await lineCallbacks[0]('second')
+    await lineCallbacks[0]('/usage')
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Prompt tokens: 6'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Completion tokens: 9'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Total tokens: 15'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('LLM calls: 2'))
 
     logSpy.mockRestore()
   })

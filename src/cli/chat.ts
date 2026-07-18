@@ -682,7 +682,10 @@ export async function startChat(config: Config): Promise<void> {
             const footer = chalk.dim("────────────────────────────────────────────────");
             console.log(`\n${header}\n${content}\n${footer}\n`);
           },
-          onTokenUsage: printTokenUsage,
+          onTokenUsage: (usage) => {
+            spinner.stop();
+            printTokenUsage(usage);
+          },
           onToolStart: (toolCall) => {
             spinner.stop();
             printToolStart(toolCall);
@@ -700,6 +703,8 @@ export async function startChat(config: Config): Promise<void> {
     } catch (error) {
       spinner.stop();
       displayError(error);
+    } finally {
+      spinner.stop();
     }
 
     console.log(chalk.gray(formatTaskTiming(timing)));
