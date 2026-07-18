@@ -38,9 +38,13 @@ export function createProgram(): Command {
         setDebug(true);
       }
       const { ConfigResolver } = await import("../config/resolver.js");
-      const { startChat } = await import("./chat.js");
+      const { runPrompt, startChat } = await import("./chat.js");
       const resolver = new ConfigResolver();
       const config = await resolver.resolve(options);
+      if (options.prompt) {
+        await runPrompt(config, options.prompt);
+        return;
+      }
       await startChat(config);
     });
 

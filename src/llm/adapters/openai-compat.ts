@@ -25,11 +25,30 @@ export class OpenAICompatibleProvider implements LLMProvider {
           ...(params.systemPrompt
             ? [{ role: "system" as const, content: params.systemPrompt }]
             : []),
-          ...params.messages.map((m) => ({
-            role: m.role,
-            content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
-          })),
+          ...params.messages.map((m) => {
+            const msg: Record<string, unknown> = {
+              role: m.role,
+              content: m.content,
+            };
+            // tool 消息需要 tool_call_id
+            if (m.role === "tool" && m.toolCallId) {
+              msg.tool_call_id = m.toolCallId;
+            }
+            // assistant 消息可能携带 tool_calls
+            if (m.role === "assistant" && m.toolCalls) {
+              msg.tool_calls = m.toolCalls;
+            }
+            return msg;
+          }),
         ],
+        tools: params.tools?.map((t) => ({
+          type: "function",
+          function: {
+            name: t.name,
+            description: t.description,
+            parameters: t.parameters,
+          },
+        })),
         max_tokens: params.maxTokens,
         temperature: params.temperature,
       }),

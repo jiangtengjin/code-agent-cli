@@ -1,44 +1,72 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createProgram } from "../../src/cli/commands.js";
 
-describe("CLI 命令框架", () => {
-  it("应创建具有正确名称的程序", () => {
+const cliMocks = vi.hoisted(() => ({
+  resolve: vi.fn(),
+  runPrompt: vi.fn(),
+  startChat: vi.fn(),
+}));
+
+vi.mock("../../src/config/resolver.js", () => ({
+  ConfigResolver: vi.fn(() => ({
+    resolve: cliMocks.resolve,
+  })),
+}));
+
+vi.mock("../../src/cli/chat.js", () => ({
+  runPrompt: cliMocks.runPrompt,
+  startChat: cliMocks.startChat,
+}));
+
+describe("CLI command framework", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    cliMocks.resolve.mockResolvedValue({
+      model: { provider: "deepseek", model: "test", apiKey: "sk-test" },
+    });
+  });
+
+  it("creates a program with the expected name", () => {
     const program = createProgram();
     expect(program.name()).toBe("code-agent");
   });
 
-  it("应包含正确的描述", () => {
+  it("has the expected description", () => {
     const program = createProgram();
     expect(program.description()).toBe("终端原生编码智能体工具");
   });
 
-  it("应包含 init 子命令", () => {
+  it("includes the init subcommand", () => {
     const program = createProgram();
     const initCmd = program.commands.find((cmd) => cmd.name() === "init");
+
     expect(initCmd).toBeDefined();
     expect(initCmd?.description()).toBe("在当前项目初始化配置文件");
   });
 
-  it("应包含 config 子命令", () => {
+  it("includes the config subcommand", () => {
     const program = createProgram();
     const configCmd = program.commands.find((cmd) => cmd.name() === "config");
+
     expect(configCmd).toBeDefined();
     expect(configCmd?.description()).toBe("管理配置");
   });
 
-  it("config 子命令应包含 set/get/list/edit", () => {
+  it("config subcommand includes set/get/list/edit", () => {
     const program = createProgram();
     const configCmd = program.commands.find((cmd) => cmd.name() === "config")!;
     const subCmdNames = configCmd.commands.map((c) => c.name());
+
     expect(subCmdNames).toContain("set");
     expect(subCmdNames).toContain("get");
     expect(subCmdNames).toContain("list");
     expect(subCmdNames).toContain("edit");
   });
 
-  it("应包含所有全局选项", () => {
+  it("includes all global options", () => {
     const program = createProgram();
     const opts = program.options.map((o) => o.long);
+
     expect(opts).toContain("--prompt");
     expect(opts).toContain("--mode");
     expect(opts).toContain("--model");
@@ -47,9 +75,22 @@ describe("CLI 命令框架", () => {
     expect(opts).toContain("--version");
   });
 
-  it("--help 应包含中文描述", () => {
+  it("help includes the Chinese description", () => {
     const program = createProgram();
     const helpInfo = program.helpInformation();
+
     expect(helpInfo).toContain("终端原生编码智能体工具");
+  });
+
+  it("runs a non-interactive task when --prompt is provided", async () => {
+    const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
+    cliMocks.resolve.mockResolvedValue(config);
+    const program = createProgram();
+
+    await program.parseAsync(["--prompt", "hello"], { from: "user" });
+
+    expect(cliMocks.resolve).toHaveBeenCalledWith(expect.objectContaining({ prompt: "hello" }));
+    expect(cliMocks.runPrompt).toHaveBeenCalledWith(config, "hello");
+    expect(cliMocks.startChat).not.toHaveBeenCalled();
   });
 });

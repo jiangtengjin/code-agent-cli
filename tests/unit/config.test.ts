@@ -67,6 +67,39 @@ describe("ConfigResolver 配置合并", () => {
     expect(config.model?.model).toBe("deepseek-coder");
   });
 
+  it("preserves provider settings when CLI overrides only the model name", async () => {
+    const previousEnv = {
+      CODE_AGENT_PROVIDER: process.env.CODE_AGENT_PROVIDER,
+      CODE_AGENT_MODEL: process.env.CODE_AGENT_MODEL,
+      CODE_AGENT_API_KEY: process.env.CODE_AGENT_API_KEY,
+      CODE_AGENT_BASE_URL: process.env.CODE_AGENT_BASE_URL,
+    };
+    process.env.CODE_AGENT_PROVIDER = "deepseek";
+    process.env.CODE_AGENT_MODEL = "deepseek-chat";
+    process.env.CODE_AGENT_API_KEY = "sk-env";
+    process.env.CODE_AGENT_BASE_URL = "https://api.deepseek.com/v1";
+
+    try {
+      const resolver = new ConfigResolver();
+      const config = await resolver.resolve({ model: "deepseek-coder" });
+
+      expect(config.model).toMatchObject({
+        provider: "deepseek",
+        model: "deepseek-coder",
+        apiKey: "sk-env",
+        baseUrl: "https://api.deepseek.com/v1",
+      });
+    } finally {
+      for (const [key, value] of Object.entries(previousEnv)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    }
+  });
+
   it("应合并 CLI 选项中的 yolo", async () => {
     const resolver = new ConfigResolver();
     const config = await resolver.resolve({ yolo: true });

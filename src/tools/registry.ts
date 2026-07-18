@@ -7,6 +7,10 @@ export class ToolRegistry {
     this.tools.set(tool.name, tool);
   }
 
+  unregister(name: string): boolean {
+    return this.tools.delete(name);
+  }
+
   registerMany(tools: ToolDefinition[]): void {
     for (const tool of tools) {
       this.register(tool);

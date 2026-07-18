@@ -85,4 +85,20 @@ describe("ToolRegistry", () => {
     expect(registry.has("nonexistent")).toBe(false);
     expect(registry.get("nonexistent")).toBeUndefined();
   });
+
+  it("should unregister tools by name", () => {
+    const tool: ToolDefinition = {
+      name: "test-tool",
+      description: "test tool",
+      parameters: { type: "object", properties: {} },
+      execute: async () => ({ success: true }),
+    };
+
+    registry.register(tool);
+
+    expect(registry.unregister("test-tool")).toBe(true);
+    expect(registry.has("test-tool")).toBe(false);
+    expect(registry.get("test-tool")).toBeUndefined();
+    expect(registry.unregister("test-tool")).toBe(false);
+  });
 });
