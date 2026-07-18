@@ -29,10 +29,7 @@ export class UsageTracker {
   }
 }
 
-export function formatUsageSnapshot(
-  snapshot: UsageSnapshot,
-  modelName: string,
-): string {
+export function formatUsageSnapshot(snapshot: UsageSnapshot, modelName: string): string {
   return [
     "Token usage",
     `Model: ${modelName}`,
