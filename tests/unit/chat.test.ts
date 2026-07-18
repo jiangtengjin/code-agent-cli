@@ -88,6 +88,20 @@ describe('slash command suggestions', () => {
       replacement: 'plan',
     })
   })
+
+  it('suggests the usage command', async () => {
+    const { getSlashCommandSuggestions, getSlashCommandCompletion } = await import('../../src/cli/chat.js')
+
+    expect(getSlashCommandSuggestions('/us')[0]).toMatchObject({
+      kind: 'command',
+      value: 'usage',
+    })
+    expect(getSlashCommandCompletion('/us')).toEqual({
+      start: 1,
+      end: 3,
+      replacement: 'usage ',
+    })
+  })
 })
 
 describe('task timing', () => {
@@ -105,7 +119,7 @@ describe('task timing', () => {
         },
         4200,
       ),
-    ).toBe('耗时: 总计 3.2s · 思考 1.5s · 工具 2 次 800ms · 轮次 3')
+    ).toBe('Elapsed: total 3.2s | thinking 1.5s | tools 2 calls 800ms | iterations 3')
   })
 })
 
@@ -286,6 +300,62 @@ describe('startChat', () => {
 
     await expect(fs.readFile(filePath, 'utf-8')).resolves.toBe('created by yolo')
     expect(mockRl.question).not.toHaveBeenCalled()
+
+    logSpy.mockRestore()
+  })
+
+  it('prints cumulative token usage with /usage', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({
+      content: 'reply with usage',
+      model: 'test',
+      usage: { promptTokens: 11, completionTokens: 7, totalTokens: 18 },
+    })
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    const lineCallbacks: Array<(input: string) => Promise<void> | void> = []
+    mockRl.on.mockImplementation((_event: string, cb: (input: string) => Promise<void> | void) => {
+      lineCallbacks.push(cb)
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+    } as any)
+
+    await lineCallbacks[0]('hello')
+    await lineCallbacks[0]('/usage')
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Total tokens: 18'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('LLM calls: 1'))
+
+    logSpy.mockRestore()
+  })
+
+  it('uses the auto mode iteration cap when configured', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValue({
+      content: '',
+      model: 'test',
+      toolCalls: [{ id: 'call-1', name: 'missing_tool', args: {} }],
+    })
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    const lineCallbacks: Array<(input: string) => Promise<void> | void> = []
+    mockRl.on.mockImplementation((_event: string, cb: (input: string) => Promise<void> | void) => {
+      lineCallbacks.push(cb)
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      mode: 'auto',
+    } as any)
+
+    await lineCallbacks[0]('run autonomously')
+
+    expect(providerMocks.chat).toHaveBeenCalledTimes(25)
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Reached max execution steps'),
+    )
 
     logSpy.mockRestore()
   })

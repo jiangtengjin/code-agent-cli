@@ -3,14 +3,19 @@ import chalk from "chalk";
 import ora from "ora";
 import type { LLMProvider } from "../llm/provider.js";
 import { createProviderFromConfig } from "../llm/registry.js";
+import { ModeRouter } from "../modes/router.js";
+import { createTaskTiming, formatTaskTiming } from "../session/execution.js";
+import { UsageTracker, formatUsageSnapshot } from "../session/usage.js";
 import { createDefaultToolRegistry } from "../tools/built-in/index.js";
-import type { ToolRegistry } from "../tools/registry.js";
 import type { Config } from "../types/config.js";
 import type { ChatMode } from "../types/mode.js";
-import type { LLMMessage, LLMToolCall } from "../types/provider.js";
+import type { LLMMessage, LLMToolCall, LLMUsage } from "../types/provider.js";
+import type { ToolResult } from "../types/tool.js";
 import { maskApiKey } from "../utils/api-key.js";
 import { formatDuration } from "../utils/format.js";
 import { isSensitivePath } from "../utils/security.js";
+
+export { formatTaskTiming } from "../session/execution.js";
 
 const MODE_COLORS: Record<ChatMode, (text: string) => string> = {
   normal: chalk.cyan,
@@ -92,14 +97,6 @@ export type SlashCompletion = {
   replacement: string;
 };
 
-export type TaskTimingStats = {
-  startedAt: number;
-  thinkingMs: number;
-  toolMs: number;
-  toolCalls: number;
-  iterations: number;
-};
-
 const MODES: ChatMode[] = ["normal", "auto", "plan", "edit"];
 
 const COMMANDS: SlashCommand[] = [
@@ -125,6 +122,12 @@ const COMMANDS: SlashCommand[] = [
     desc: "清空对话历史",
     aliases: ["cls"],
     keywords: ["清空", "清除", "历史", "重置"],
+  },
+  {
+    name: "usage",
+    desc: "Show token usage",
+    aliases: ["tokens"],
+    keywords: ["usage", "token", "tokens"],
   },
   {
     name: "exit",
@@ -285,6 +288,11 @@ export function getSlashCommandCompletion(line: string): SlashCompletion | null 
       (match) => match.kind === "command" && match.value.startsWith(commandQuery.toLowerCase()),
     )
     .map((match) => match.value);
+
+  if (commandNameMatches.length === 1) {
+    return { start: 1, end: line.length, replacement: `${commandNameMatches[0]} ` };
+  }
+
   const prefix = getSafeCommonPrefix(commandNameMatches);
 
   if (prefix.length > commandQuery.length) {
@@ -294,45 +302,13 @@ export function getSlashCommandCompletion(line: string): SlashCompletion | null 
   return null;
 }
 
-function nowMs(): number {
-  return Date.now();
-}
-
-function elapsedSince(startedAt: number): number {
-  return Math.max(nowMs() - startedAt, 0);
-}
-
-function createTaskTiming(): TaskTimingStats {
-  return {
-    startedAt: nowMs(),
-    thinkingMs: 0,
-    toolMs: 0,
-    toolCalls: 0,
-    iterations: 0,
-  };
-}
-
-export function formatTaskTiming(stats: TaskTimingStats, finishedAt = nowMs()): string {
-  const totalMs = Math.max(finishedAt - stats.startedAt, 0);
-  const parts = [`总计 ${formatDuration(totalMs)}`, `思考 ${formatDuration(stats.thinkingMs)}`];
-
-  if (stats.toolCalls > 0) {
-    parts.push(`工具 ${stats.toolCalls} 次 ${formatDuration(stats.toolMs)}`);
-  }
-
-  if (stats.iterations > 1) {
-    parts.push(`轮次 ${stats.iterations}`);
-  }
-
-  return `耗时: ${parts.join(" · ")}`;
-}
-
 function handleSlashCommand(
   input: string,
   ctx: {
     messages: LLMMessage[];
     mode: ChatMode;
     config: Config;
+    usageTracker: UsageTracker;
     setMode: (m: ChatMode) => void;
   },
 ): void {
@@ -347,6 +323,7 @@ ${chalk.bold("可用命令:")}
   ${chalk.yellow("/model")}          查看当前模型
   ${chalk.yellow("/mode <mode>")}    切换模式 (normal/auto/plan/edit)
   ${chalk.yellow("/clear")}          清空对话历史
+  ${chalk.yellow("/usage")}         Show token usage
   ${chalk.yellow("/help")}           显示此帮助
   ${chalk.yellow("/exit")}           退出
 `);
@@ -368,6 +345,14 @@ ${chalk.bold("可用命令:")}
     case "clear":
       ctx.messages.length = 0;
       console.log(chalk.green("对话历史已清空"));
+      break;
+
+    case "usage":
+      console.log(
+        chalk.yellow(
+          formatUsageSnapshot(ctx.usageTracker.snapshot(), ctx.config.model?.model ?? "unknown"),
+        ),
+      );
       break;
 
     case "exit":
@@ -395,69 +380,28 @@ function displayError(error: unknown): void {
   }
 }
 
-type ConfirmToolCall = (toolCall: LLMToolCall) => Promise<boolean>;
+function printTokenUsage(usage: LLMUsage): void {
+  console.log(chalk.gray(`Token: input ${usage.promptTokens} / output ${usage.completionTokens}`));
+}
 
-async function handleToolCalls(
-  toolCalls: LLMToolCall[],
-  toolRegistry: ToolRegistry,
-  messages: LLMMessage[],
-  timing: TaskTimingStats,
-  skipConfirm: boolean,
-  confirmToolCall: ConfirmToolCall,
-): Promise<void> {
-  for (const toolCall of toolCalls) {
-    timing.toolCalls++;
-    const tool = toolRegistry.get(toolCall.name);
+function printToolStart(toolCall: LLMToolCall): void {
+  console.log(chalk.cyan(`\n---- Tool call: ${toolCall.name} ----`));
+  console.log(chalk.gray(`Args: ${JSON.stringify(toolCall.args, null, 2)}`));
+}
 
-    if (!tool) {
-      console.log(chalk.red(`未知工具: ${toolCall.name}`));
-      messages.push({
-        role: "tool",
-        toolCallId: toolCall.id,
-        content: JSON.stringify({ success: false, error: `未知工具: ${toolCall.name}` }),
-      });
-      continue;
+function printToolResult(toolCall: LLMToolCall, result: ToolResult, elapsedMs: number): void {
+  if (result.success) {
+    console.log(chalk.green(`Success: ${toolCall.name} (${formatDuration(elapsedMs)})`));
+    if (result.metadata?.diff) {
+      console.log(chalk.gray("Diff:"));
+      console.log(result.metadata.diff);
     }
-
-    console.log(chalk.cyan(`\n─── 工具调用: ${tool.name} ───────────────────────`));
-    console.log(chalk.gray(`参数: ${JSON.stringify(toolCall.args, null, 2)}`));
-
-    if (tool.requiresConfirm && !skipConfirm) {
-      const confirmed = await confirmToolCall(toolCall);
-      if (!confirmed) {
-        console.log(chalk.yellow("用户取消操作"));
-        messages.push({
-          role: "tool",
-          toolCallId: toolCall.id,
-          content: JSON.stringify({ success: false, error: "用户取消" }),
-        });
-        continue;
-      }
-    }
-
-    const toolStartedAt = nowMs();
-    let toolElapsed = 0;
-    const result = await tool.execute(toolCall.args).finally(() => {
-      toolElapsed = elapsedSince(toolStartedAt);
-      timing.toolMs += toolElapsed;
-    });
-
-    if (result.success) {
-      console.log(chalk.green(`✓ 执行成功 (${formatDuration(toolElapsed)})`));
-      if (result.metadata?.diff) {
-        console.log(chalk.gray("Diff:"));
-        console.log(result.metadata.diff);
-      }
-    } else {
-      console.log(chalk.red(`✗ 执行失败 (${formatDuration(toolElapsed)}): ${result.error}`));
-    }
-
-    messages.push({
-      role: "tool",
-      toolCallId: toolCall.id,
-      content: JSON.stringify(result),
-    });
+    return;
   }
+
+  console.log(
+    chalk.red(`Failed: ${toolCall.name} (${formatDuration(elapsedMs)}): ${result.error}`),
+  );
 }
 
 function userConfirm(toolCall: LLMToolCall, rl: readline.Interface): Promise<boolean> {
@@ -485,71 +429,34 @@ export async function runPrompt(config: Config, prompt: string): Promise<void> {
 
   const provider = createProviderFromConfig(config);
   const toolRegistry = createDefaultToolRegistry();
-  const messages: LLMMessage[] = [{ role: "user", content: prompt }];
+  const messages: LLMMessage[] = [];
   const timing = createTaskTiming();
+  const usageTracker = new UsageTracker();
+  const modeRouter = new ModeRouter();
+  const handler = modeRouter.getHandler(config.mode);
 
   try {
-    const maxIterations = 50;
-    let iteration = 0;
-
-    while (iteration < maxIterations) {
-      iteration++;
-      timing.iterations = iteration;
-
-      const thinkingStartedAt = nowMs();
-      const response = await provider
-        .chat({
-          messages: [...messages],
-          systemPrompt: config.systemPrompt,
-          tools: toolRegistry.getToolDefinitions(),
-        })
-        .finally(() => {
-          timing.thinkingMs += elapsedSince(thinkingStartedAt);
-        });
-
-      if (response.toolCalls && response.toolCalls.length > 0) {
-        messages.push({
-          role: "assistant",
-          content: response.content || null,
-          toolCalls: response.toolCalls.map((tc) => ({
-            id: tc.id,
-            type: "function" as const,
-            function: {
-              name: tc.name,
-              arguments: JSON.stringify(tc.args),
-            },
-          })),
-        });
-        await handleToolCalls(
-          response.toolCalls,
-          toolRegistry,
-          messages,
-          timing,
-          Boolean(config.yolo),
-          async () => false,
-        );
-        continue;
-      }
-
-      if (response.content) {
-        messages.push({ role: "assistant", content: response.content });
-        console.log(response.content);
-      }
-
-      if (response.usage) {
-        console.log(
-          chalk.gray(
-            `Token: 杈撳叆 ${response.usage.promptTokens} / 杈撳嚭 ${response.usage.completionTokens}`,
-          ),
-        );
-      }
-
-      break;
-    }
-
-    if (iteration >= maxIterations) {
-      console.log(chalk.yellow("\nReached max execution steps; the task may be incomplete."));
-    }
+    await handler.run(prompt, {
+      provider,
+      toolRegistry,
+      messages,
+      config,
+      usageTracker,
+      timing,
+      skipConfirm: Boolean(config.yolo),
+      confirmToolCall: async () => false,
+      output: {
+        onAssistantMessage: (content) => {
+          console.log(content);
+        },
+        onTokenUsage: printTokenUsage,
+        onToolStart: printToolStart,
+        onToolResult: printToolResult,
+        onWarning: (message) => {
+          console.log(chalk.yellow(`\n${message}`));
+        },
+      },
+    });
   } catch (error) {
     displayError(error);
   }
@@ -567,6 +474,8 @@ export async function startChat(config: Config): Promise<void> {
   const provider = createProviderFromConfig(config);
   const toolRegistry = createDefaultToolRegistry();
   const messages: LLMMessage[] = [];
+  const usageTracker = new UsageTracker();
+  const modeRouter = new ModeRouter();
   let mode: ChatMode = (config.mode as ChatMode) ?? "normal";
 
   displayWelcome(config, provider);
@@ -734,6 +643,7 @@ export async function startChat(config: Config): Promise<void> {
         messages,
         mode,
         config,
+        usageTracker,
         setMode: (m) => {
           mode = m;
           setChatPrompt();
@@ -744,81 +654,49 @@ export async function startChat(config: Config): Promise<void> {
     }
 
     drawUserMessage(trimmed);
-    messages.push({ role: "user", content: trimmed });
 
     const timing = createTaskTiming();
-    const spinner = ora({ text: "AI 思考中...", color: "cyan" }).start();
+    const spinner = ora({ text: "AI thinking...", color: "cyan" }).start();
+    const handler = modeRouter.getHandler(mode);
 
     try {
-      const maxIterations = 50;
-      let iteration = 0;
-
-      while (iteration < maxIterations) {
-        iteration++;
-        timing.iterations = iteration;
-        if (iteration > 1) {
-          spinner.text = `AI 执行中... (第 ${iteration - 1} 步)`;
-          spinner.start();
-        }
-
-        const thinkingStartedAt = nowMs();
-        const response = await provider
-          .chat({
-            messages: [...messages],
-            systemPrompt: config.systemPrompt,
-            tools: toolRegistry.getToolDefinitions(),
-          })
-          .finally(() => {
-            timing.thinkingMs += elapsedSince(thinkingStartedAt);
-          });
-
-        spinner.stop();
-
-        if (response.toolCalls && response.toolCalls.length > 0) {
-          messages.push({
-            role: "assistant",
-            content: response.content || null,
-            toolCalls: response.toolCalls.map((tc) => ({
-              id: tc.id,
-              type: "function" as const,
-              function: {
-                name: tc.name,
-                arguments: JSON.stringify(tc.args),
-              },
-            })),
-          });
-          await handleToolCalls(
-            response.toolCalls,
-            toolRegistry,
-            messages,
-            timing,
-            Boolean(config.yolo),
-            (toolCall) => userConfirm(toolCall, rl),
-          );
-          continue;
-        }
-
-        if (response.content) {
-          messages.push({ role: "assistant", content: response.content });
-          const header = chalk.dim("─── AI ────────────────────────────────────────");
-          const footer = chalk.dim("────────────────────────────────────────────────");
-          console.log(`\n${header}\n${response.content}\n${footer}\n`);
-        }
-
-        if (response.usage) {
-          console.log(
-            chalk.gray(
-              `Token: 输入 ${response.usage.promptTokens} / 输出 ${response.usage.completionTokens}`,
-            ),
-          );
-        }
-
-        break;
-      }
-
-      if (iteration >= maxIterations) {
-        console.log(chalk.yellow("\n⚠ 已达到最大执行步数限制，可能未完全执行。"));
-      }
+      await handler.run(trimmed, {
+        provider,
+        toolRegistry,
+        messages,
+        config,
+        usageTracker,
+        timing,
+        skipConfirm: Boolean(config.yolo),
+        confirmToolCall: (toolCall) => userConfirm(toolCall, rl),
+        output: {
+          onIteration: (iteration) => {
+            if (iteration > 1) {
+              spinner.text = `AI executing... (step ${iteration - 1})`;
+              spinner.start();
+            }
+          },
+          onAssistantMessage: (content) => {
+            spinner.stop();
+            const header = chalk.dim("─── AI ────────────────────────────────────────");
+            const footer = chalk.dim("────────────────────────────────────────────────");
+            console.log(`\n${header}\n${content}\n${footer}\n`);
+          },
+          onTokenUsage: printTokenUsage,
+          onToolStart: (toolCall) => {
+            spinner.stop();
+            printToolStart(toolCall);
+          },
+          onToolResult: (toolCall, result, elapsedMs) => {
+            spinner.stop();
+            printToolResult(toolCall, result, elapsedMs);
+          },
+          onWarning: (message) => {
+            spinner.stop();
+            console.log(chalk.yellow(message));
+          },
+        },
+      });
     } catch (error) {
       spinner.stop();
       displayError(error);
