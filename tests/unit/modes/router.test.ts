@@ -36,4 +36,13 @@ describe("ModeRouter", () => {
       maxIterations: 10,
     });
   });
+
+  it("falls back to normal when mode is undefined", () => {
+    const router = new ModeRouter();
+
+    expect(router.getHandler(undefined)).toMatchObject({
+      mode: "normal",
+      maxIterations: 10,
+    });
+  });
 });

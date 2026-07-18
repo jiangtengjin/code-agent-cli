@@ -48,10 +48,10 @@ export function formatTaskTiming(stats: TaskTimingStats, finishedAt = nowMs()): 
   return `Elapsed: ${parts.join(" | ")}`;
 }
 
-function assistantToolCallMessage(toolCalls: LLMToolCall[]): LLMMessage {
+function assistantToolCallMessage(content: string, toolCalls: LLMToolCall[]): LLMMessage {
   return {
     role: "assistant",
-    content: null,
+    content: content || null,
     toolCalls: toolCalls.map((toolCall) => ({
       id: toolCall.id,
       type: "function",
@@ -153,7 +153,7 @@ export async function runExecutionLoop(
     }
 
     if (response.toolCalls && response.toolCalls.length > 0) {
-      context.messages.push(assistantToolCallMessage(response.toolCalls));
+      context.messages.push(assistantToolCallMessage(response.content, response.toolCalls));
       await executeToolCalls(response.toolCalls, context);
       continue;
     }
