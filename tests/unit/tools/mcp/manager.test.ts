@@ -4,7 +4,6 @@ import {
   buildMCPRegistryToolName,
 } from "../../../../src/tools/mcp/manager.js";
 import { ToolRegistry } from "../../../../src/tools/registry.js";
-import type { MCPServerConfig } from "../../../../src/types/config.js";
 import type { MCPCallToolResult, MCPToolDefinition } from "../../../../src/types/mcp.js";
 
 class FakeMCPClient {
@@ -124,33 +123,37 @@ describe("MCPServerManager", () => {
     expect(result).toEqual({ success: true, data: "lookup result" });
   });
 
-  it("skips unsupported transports and reports them through onWarning", async () => {
-    const registry = new ToolRegistry();
-    const warnings: string[] = [];
-    const createdServers: string[] = [];
+  it.each(["http", "sse"] as const)(
+    "skips unsupported %s transports and reports them through onWarning",
+    async (transport) => {
+      const registry = new ToolRegistry();
+      const warnings: string[] = [];
+      const createdServers: string[] = [];
+      const serverName = `${transport}-api`;
 
-    const manager = new MCPServerManager(
-      {
-        api: { command: "node", args: ["api-server.js"], transport: "http" },
-      },
-      registry,
-      {
-        createClient: (serverName: string) => {
-          createdServers.push(serverName);
-          return new FakeMCPClient();
+      const manager = new MCPServerManager(
+        {
+          [serverName]: { command: "node", args: ["api-server.js"], transport },
         },
-        onWarning: (message: string) => warnings.push(message),
-      },
-    );
+        registry,
+        {
+          createClient: (serverName: string) => {
+            createdServers.push(serverName);
+            return new FakeMCPClient();
+          },
+          onWarning: (message: string) => warnings.push(message),
+        },
+      );
 
-    await manager.startAll();
+      await manager.startAll();
 
-    expect(createdServers).toEqual([]);
-    expect(warnings.join("\n")).toContain("api");
-    expect(warnings.join("\n")).toContain("http");
-    expect(manager.getSummary()).toEqual({ servers: 0, tools: 0 });
-    expect(registry.list()).toEqual([]);
-  });
+      expect(createdServers).toEqual([]);
+      expect(warnings.join("\n")).toContain(serverName);
+      expect(warnings.join("\n")).toContain(transport);
+      expect(manager.getSummary()).toEqual({ servers: 0, tools: 0 });
+      expect(registry.list()).toEqual([]);
+    },
+  );
 
   it("closes every started client on stopAll", async () => {
     const registry = new ToolRegistry();
