@@ -7,6 +7,7 @@ import { ModeRouter } from "../modes/router.js";
 import { createTaskTiming, formatTaskTiming } from "../session/execution.js";
 import { UsageTracker, formatUsageSnapshot } from "../session/usage.js";
 import { createDefaultToolRegistry } from "../tools/built-in/index.js";
+import { MCPServerManager, type MCPSummary } from "../tools/mcp/manager.js";
 import type { Config } from "../types/config.js";
 import type { ChatMode } from "../types/mode.js";
 import type { LLMMessage, LLMToolCall, LLMUsage } from "../types/provider.js";
@@ -62,7 +63,13 @@ function redrawInputFrame(mode: ChatMode): void {
   process.stdout.write("\x1b[u");
 }
 
-function displayWelcome(config: Config, provider: LLMProvider): void {
+function formatMCPSummary(summary: MCPSummary): string {
+  return `MCP: ${summary.servers} servers / ${summary.tools} tools`;
+}
+
+function displayWelcome(config: Config, provider: LLMProvider, mcpSummary: MCPSummary): void {
+  const mcpLine = `${chalk.cyan("│")}  ${formatMCPSummary(mcpSummary)}`;
+
   console.log(`
 ${chalk.cyan("╭──────────────────────────────────────────────╮")}
 ${chalk.cyan("│")}            ${chalk.bold("Code Agent CLI  v0.1.0")}             ${chalk.cyan("│")}
@@ -71,6 +78,7 @@ ${chalk.cyan("│")}                                              ${chalk.cyan("
 ${chalk.cyan("│")}  模型: ${chalk.green(provider.name)}/${chalk.green(config.model?.model ?? "unknown")}
 ${chalk.cyan("│")}  API: ${chalk.green(maskApiKey(config.model?.apiKey ?? ""))}
 ${chalk.cyan("│")}  目录: ${chalk.green(process.cwd())}
+${mcpLine}
 ${chalk.cyan("│")}                                              ${chalk.cyan("│")}
 ${chalk.cyan("│")}  输入 ${chalk.yellow("/help")} 查看可用命令                     ${chalk.cyan("│")}
 ${chalk.cyan("╰──────────────────────────────────────────────╯")}
@@ -429,6 +437,11 @@ export async function runPrompt(config: Config, prompt: string): Promise<void> {
 
   const provider = createProviderFromConfig(config);
   const toolRegistry = createDefaultToolRegistry();
+  const mcpManager = new MCPServerManager(config.mcpServers, toolRegistry, {
+    onWarning: (message) => {
+      console.log(chalk.yellow(`\n${message}`));
+    },
+  });
   const messages: LLMMessage[] = [];
   const timing = createTaskTiming();
   const usageTracker = new UsageTracker();
@@ -436,6 +449,7 @@ export async function runPrompt(config: Config, prompt: string): Promise<void> {
   const handler = modeRouter.getHandler(config.mode);
 
   try {
+    await mcpManager.startAll();
     await handler.run(prompt, {
       provider,
       toolRegistry,
@@ -459,6 +473,8 @@ export async function runPrompt(config: Config, prompt: string): Promise<void> {
     });
   } catch (error) {
     displayError(error);
+  } finally {
+    await mcpManager.stopAll();
   }
 
   console.log(chalk.gray(formatTaskTiming(timing)));
@@ -473,12 +489,18 @@ export async function startChat(config: Config): Promise<void> {
 
   const provider = createProviderFromConfig(config);
   const toolRegistry = createDefaultToolRegistry();
+  const mcpManager = new MCPServerManager(config.mcpServers, toolRegistry, {
+    onWarning: (message) => {
+      console.log(chalk.yellow(message));
+    },
+  });
   const messages: LLMMessage[] = [];
   const usageTracker = new UsageTracker();
   const modeRouter = new ModeRouter();
   let mode: ChatMode = (config.mode as ChatMode) ?? "normal";
 
-  displayWelcome(config, provider);
+  await mcpManager.startAll();
+  displayWelcome(config, provider, mcpManager.getSummary());
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -713,12 +735,13 @@ export async function startChat(config: Config): Promise<void> {
 
   promptNextInput();
 
-  rl.on("close", () => {
+  rl.on("close", async () => {
     process.stdin.removeListener("keypress", onKeypress);
     clearSuggestionBlock();
     if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
       process.stdin.setRawMode(false);
     }
+    await mcpManager.stopAll();
     console.log();
     process.exit(0);
   });

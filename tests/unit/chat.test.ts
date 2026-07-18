@@ -21,6 +21,33 @@ const spinnerMocks = vi.hoisted(() => {
   return { ora, spinner }
 })
 
+const mcpManagerMocks = vi.hoisted(() => {
+  const instances: Array<{
+    startAll: ReturnType<typeof vi.fn>
+    stopAll: ReturnType<typeof vi.fn>
+    getSummary: ReturnType<typeof vi.fn>
+  }> = []
+  let summary = { servers: 0, tools: 0 }
+
+  const MCPServerManager = vi.fn(() => {
+    const instance = {
+      startAll: vi.fn().mockResolvedValue(undefined),
+      stopAll: vi.fn().mockResolvedValue(undefined),
+      getSummary: vi.fn(() => summary),
+    }
+    instances.push(instance)
+    return instance
+  })
+
+  return {
+    MCPServerManager,
+    instances,
+    setSummary: (nextSummary: { servers: number; tools: number }) => {
+      summary = nextSummary
+    },
+  }
+})
+
 const mockRl = {
   prompt: vi.fn(),
   close: vi.fn(),
@@ -54,6 +81,10 @@ vi.mock('../../src/llm/registry.js', () => ({
     name: 'mock-provider',
     chat: providerMocks.chat,
   })),
+}))
+
+vi.mock('../../src/tools/mcp/manager.js', () => ({
+  MCPServerManager: mcpManagerMocks.MCPServerManager,
 }))
 
 describe('slash command suggestions', () => {
@@ -144,6 +175,8 @@ describe('task timing', () => {
 describe('runPrompt', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mcpManagerMocks.instances.length = 0
+    mcpManagerMocks.setSummary({ servers: 0, tools: 0 })
     providerMocks.chat.mockResolvedValue({ content: 'single reply', model: 'test' })
   })
 
@@ -169,6 +202,40 @@ describe('runPrompt', () => {
 
     logSpy.mockRestore()
   })
+
+  it('starts and stops MCP servers around prompt execution', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { runPrompt } = await import('../../src/cli/chat.js')
+    const mcpServers = {
+      filesystem: { command: 'node', args: ['mcp-server.js'] },
+    }
+
+    await runPrompt(
+      {
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        mcpServers,
+      } as any,
+      'hello from prompt',
+    )
+
+    const instance = mcpManagerMocks.instances[0]
+    expect(mcpManagerMocks.MCPServerManager).toHaveBeenCalledWith(
+      mcpServers,
+      expect.anything(),
+      expect.objectContaining({ onWarning: expect.any(Function) }),
+    )
+    expect(instance.startAll).toHaveBeenCalledTimes(1)
+    expect(providerMocks.chat).toHaveBeenCalledTimes(1)
+    expect(instance.stopAll).toHaveBeenCalledTimes(1)
+    expect(instance.startAll.mock.invocationCallOrder[0]).toBeLessThan(
+      providerMocks.chat.mock.invocationCallOrder[0],
+    )
+    expect(instance.stopAll.mock.invocationCallOrder[0]).toBeGreaterThan(
+      providerMocks.chat.mock.invocationCallOrder[0],
+    )
+
+    logSpy.mockRestore()
+  })
 })
 
 describe('startChat', () => {
@@ -176,6 +243,10 @@ describe('startChat', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mcpManagerMocks.instances.length = 0
+    mcpManagerMocks.setSummary({ servers: 0, tools: 0 })
+    vi.spyOn(process.stdin, 'prependListener').mockImplementation(() => process.stdin)
+    vi.spyOn(process.stdin, 'removeListener').mockImplementation(() => process.stdin)
     spinnerMocks.spinner.text = ''
     providerMocks.chat.mockResolvedValue({ content: 'mock reply', model: 'test' })
     mockRl.question.mockImplementation((_question: string, cb: (answer: string) => void) => {
@@ -188,6 +259,7 @@ describe('startChat', () => {
     for (const tempDir of tempDirs) {
       await fs.rm(tempDir, { recursive: true, force: true })
     }
+    vi.restoreAllMocks()
   })
 
   it('exits if no apiKey configured', async () => {
@@ -197,6 +269,51 @@ describe('startChat', () => {
     await startChat({} as any)
 
     expect(exitSpy).toHaveBeenCalledWith(1)
+    exitSpy.mockRestore()
+  })
+
+  it('shows MCP summary in the welcome output', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    mcpManagerMocks.setSummary({ servers: 2, tools: 5 })
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      mcpServers: {
+        filesystem: { command: 'node', args: ['mcp-server.js'] },
+      },
+    } as any)
+
+    const instance = mcpManagerMocks.instances[0]
+    expect(instance.startAll).toHaveBeenCalledTimes(1)
+    expect(instance.getSummary).toHaveBeenCalledTimes(1)
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('MCP: 2 servers / 5 tools'))
+
+    logSpy.mockRestore()
+  })
+
+  it('stops MCP servers when readline closes', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+    const callbacks: Record<string, () => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: () => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      mcpServers: {
+        filesystem: { command: 'node', args: ['mcp-server.js'] },
+      },
+    } as any)
+
+    await callbacks.close()
+
+    expect(mcpManagerMocks.instances[0].stopAll).toHaveBeenCalledTimes(1)
+    expect(exitSpy).toHaveBeenCalledWith(0)
+
+    logSpy.mockRestore()
     exitSpy.mockRestore()
   })
 
