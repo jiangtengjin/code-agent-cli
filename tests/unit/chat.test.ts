@@ -21,6 +21,10 @@ const spinnerMocks = vi.hoisted(() => {
   return { ora, spinner }
 })
 
+const readlineMocks = vi.hoisted(() => ({
+  emitKeypressEvents: vi.fn(),
+}))
+
 const mcpManagerMocks = vi.hoisted(() => {
   const instances: Array<{
     startAll: ReturnType<typeof vi.fn>
@@ -59,7 +63,7 @@ const mockRl = {
 
 vi.mock('node:readline', () => ({
   createInterface: vi.fn(() => mockRl),
-  emitKeypressEvents: vi.fn(),
+  emitKeypressEvents: readlineMocks.emitKeypressEvents,
 }))
 
 vi.mock('ora', () => ({
@@ -245,6 +249,7 @@ describe('startChat', () => {
     vi.clearAllMocks()
     mcpManagerMocks.instances.length = 0
     mcpManagerMocks.setSummary({ servers: 0, tools: 0 })
+    readlineMocks.emitKeypressEvents.mockImplementation(() => undefined)
     vi.spyOn(process.stdin, 'prependListener').mockImplementation(() => process.stdin)
     vi.spyOn(process.stdin, 'removeListener').mockImplementation(() => process.stdin)
     spinnerMocks.spinner.text = ''
@@ -315,6 +320,62 @@ describe('startChat', () => {
 
     logSpy.mockRestore()
     exitSpy.mockRestore()
+  })
+
+  it('stops MCP servers before exiting from slash /exit', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      mcpServers: {
+        filesystem: { command: 'node', args: ['mcp-server.js'] },
+      },
+    } as any)
+
+    await callbacks.line('/exit')
+
+    const instance = mcpManagerMocks.instances[0]
+    expect(instance.stopAll).toHaveBeenCalledTimes(1)
+    expect(exitSpy).toHaveBeenCalledWith(0)
+    expect(instance.stopAll.mock.invocationCallOrder[0]).toBeLessThan(
+      exitSpy.mock.invocationCallOrder[0],
+    )
+
+    logSpy.mockRestore()
+    exitSpy.mockRestore()
+  })
+
+  it('stops MCP servers if chat setup fails after startup', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const setupError = new Error('keypress setup failed')
+    readlineMocks.emitKeypressEvents.mockImplementationOnce(() => {
+      throw setupError
+    })
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    await expect(
+      startChat({
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        mcpServers: {
+          filesystem: { command: 'node', args: ['mcp-server.js'] },
+        },
+      } as any),
+    ).rejects.toThrow('keypress setup failed')
+
+    const instance = mcpManagerMocks.instances[0]
+    expect(instance.startAll).toHaveBeenCalledTimes(1)
+    expect(instance.stopAll).toHaveBeenCalledTimes(1)
+    expect(instance.stopAll.mock.invocationCallOrder[0]).toBeGreaterThan(
+      instance.startAll.mock.invocationCallOrder[0],
+    )
+
+    logSpy.mockRestore()
   })
 
   it('processes slash /help command', async () => {

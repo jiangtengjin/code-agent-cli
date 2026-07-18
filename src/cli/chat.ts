@@ -310,7 +310,7 @@ export function getSlashCommandCompletion(line: string): SlashCompletion | null 
   return null;
 }
 
-function handleSlashCommand(
+async function handleSlashCommand(
   input: string,
   ctx: {
     messages: LLMMessage[];
@@ -318,8 +318,9 @@ function handleSlashCommand(
     config: Config;
     usageTracker: UsageTracker;
     setMode: (m: ChatMode) => void;
+    onExit?: (code: number) => Promise<void> | void;
   },
-): void {
+): Promise<"continue" | "exit"> {
   const parts = input.slice(1).split(/\s+/);
   const cmd = parts[0].toLowerCase();
   const args = parts.slice(1);
@@ -364,12 +365,18 @@ ${chalk.bold("可用命令:")}
       break;
 
     case "exit":
-      process.exit(0);
-      break;
+      if (ctx.onExit) {
+        await ctx.onExit(0);
+      } else {
+        process.exit(0);
+      }
+      return "exit";
 
     default:
       console.log(chalk.yellow(`未知命令: /${cmd}。输入 /help 查看可用命令`));
   }
+
+  return "continue";
 }
 
 function displayError(error: unknown): void {
@@ -498,23 +505,109 @@ export async function startChat(config: Config): Promise<void> {
   const usageTracker = new UsageTracker();
   const modeRouter = new ModeRouter();
   let mode: ChatMode = (config.mode as ChatMode) ?? "normal";
+  type KeypressListener = (str: string, key: { name?: string; ctrl?: boolean }) => void;
+  const cleanupHooks: {
+    clearSuggestionBlock?: () => void;
+    keypressListener?: KeypressListener;
+  } = {};
+  let renderedSuggestionRows = 0;
+  let keypressListenerAttached = false;
+  let rawModeEnabled = false;
+  let shutdownPromise: Promise<void> | undefined;
+  let exitRequested = false;
+  let exitCode = 0;
+  let exitHandled = false;
 
-  await mcpManager.startAll();
-  displayWelcome(config, provider, mcpManager.getSummary());
-
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: "",
-    terminal: true,
-  });
-  readline.emitKeypressEvents(process.stdin, rl);
-
-  if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
-    process.stdin.setRawMode(true);
+  function logCleanupError(action: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(chalk.red(`Cleanup failed during ${action}: ${message}`));
   }
 
-  let renderedSuggestionRows = 0;
+  async function shutdown(options: { exit?: boolean; exitCode?: number } = {}): Promise<void> {
+    if (options.exit) {
+      exitRequested = true;
+      exitCode = options.exitCode ?? 0;
+    }
+
+    if (!shutdownPromise) {
+      shutdownPromise = (async () => {
+        if (keypressListenerAttached && cleanupHooks.keypressListener) {
+          try {
+            process.stdin.removeListener("keypress", cleanupHooks.keypressListener);
+          } catch (error) {
+            logCleanupError("keypress listener removal", error);
+          } finally {
+            keypressListenerAttached = false;
+          }
+        }
+
+        if (cleanupHooks.clearSuggestionBlock) {
+          try {
+            cleanupHooks.clearSuggestionBlock();
+          } catch (error) {
+            logCleanupError("suggestion cleanup", error);
+          }
+        }
+
+        if (
+          rawModeEnabled &&
+          process.stdin.isTTY &&
+          typeof process.stdin.setRawMode === "function"
+        ) {
+          try {
+            process.stdin.setRawMode(false);
+          } catch (error) {
+            logCleanupError("raw mode restore", error);
+          } finally {
+            rawModeEnabled = false;
+          }
+        }
+
+        try {
+          await mcpManager.stopAll();
+        } catch (error) {
+          logCleanupError("MCP shutdown", error);
+        }
+      })();
+    }
+
+    await shutdownPromise;
+
+    if (exitRequested && !exitHandled) {
+      exitHandled = true;
+      console.log();
+      process.exit(exitCode);
+    }
+  }
+
+  async function runSetup<T>(operation: () => T): Promise<T> {
+    try {
+      return operation();
+    } catch (error) {
+      await shutdown();
+      throw error;
+    }
+  }
+
+  await mcpManager.startAll();
+  await runSetup(() => displayWelcome(config, provider, mcpManager.getSummary()));
+
+  const rl = await runSetup(() =>
+    readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      prompt: "",
+      terminal: true,
+    }),
+  );
+  await runSetup(() => readline.emitKeypressEvents(process.stdin, rl));
+
+  if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
+    await runSetup(() => {
+      process.stdin.setRawMode(true);
+      rawModeEnabled = true;
+    });
+  }
 
   function setChatPrompt(): void {
     rl.setPrompt(CHAT_PROMPT);
@@ -576,6 +669,7 @@ export async function startChat(config: Config): Promise<void> {
   function clearSuggestionBlock(): void {
     updateSuggestionBlock([]);
   }
+  cleanupHooks.clearSuggestionBlock = clearSuggestionBlock;
 
   function replaceInputRange(completion: SlashCompletion): boolean {
     if (rl.cursor !== completion.end) return false;
@@ -619,7 +713,7 @@ export async function startChat(config: Config): Promise<void> {
     renderSuggestionBlock();
   }
 
-  const onKeypress = (_str: string, key: { name?: string; ctrl?: boolean }) => {
+  const onKeypress: KeypressListener = (_str, key) => {
     if (key.name === "return" || key.name === "enter" || (key.ctrl && key.name === "c")) {
       clearSuggestionBlock();
       return;
@@ -649,100 +743,107 @@ export async function startChat(config: Config): Promise<void> {
       renderSuggestionBlock();
     });
   };
+  cleanupHooks.keypressListener = onKeypress;
 
-  process.stdin.prependListener("keypress", onKeypress);
+  await runSetup(() => {
+    process.stdin.prependListener("keypress", onKeypress);
+    keypressListenerAttached = true;
+  });
 
-  rl.on("line", async (input: string) => {
-    clearSuggestionBlock();
-    const trimmed = input.trim();
-    if (!trimmed) {
+  await runSetup(() => {
+    rl.on("line", async (input: string) => {
+      clearSuggestionBlock();
+      const trimmed = input.trim();
+      if (!trimmed) {
+        promptNextInput();
+        return;
+      }
+
+      if (trimmed.startsWith("/")) {
+        const commandResult = await handleSlashCommand(trimmed, {
+          messages,
+          mode,
+          config,
+          usageTracker,
+          setMode: (m) => {
+            mode = m;
+            setChatPrompt();
+          },
+          onExit: (code) => shutdown({ exit: true, exitCode: code }),
+        });
+        if (commandResult === "exit") {
+          return;
+        }
+        promptNextInput();
+        return;
+      }
+
+      drawUserMessage(trimmed);
+
+      const timing = createTaskTiming();
+      const spinner = ora({ text: "AI thinking...", color: "cyan" }).start();
+      const handler = modeRouter.getHandler(mode);
+
+      try {
+        await handler.run(trimmed, {
+          provider,
+          toolRegistry,
+          messages,
+          config,
+          usageTracker,
+          timing,
+          skipConfirm: Boolean(config.yolo),
+          confirmToolCall: (toolCall) => userConfirm(toolCall, rl),
+          output: {
+            onIteration: (iteration) => {
+              if (iteration > 1) {
+                spinner.text = `AI executing... (step ${iteration - 1})`;
+                spinner.start();
+              }
+            },
+            onAssistantMessage: (content) => {
+              spinner.stop();
+              const header = chalk.dim("─── AI ────────────────────────────────────────");
+              const footer = chalk.dim("────────────────────────────────────────────────");
+              console.log(`\n${header}\n${content}\n${footer}\n`);
+            },
+            onTokenUsage: (usage) => {
+              spinner.stop();
+              printTokenUsage(usage);
+            },
+            onToolStart: (toolCall) => {
+              spinner.stop();
+              printToolStart(toolCall);
+            },
+            onToolResult: (toolCall, result, elapsedMs) => {
+              spinner.stop();
+              printToolResult(toolCall, result, elapsedMs);
+            },
+            onWarning: (message) => {
+              spinner.stop();
+              console.log(chalk.yellow(message));
+            },
+          },
+        });
+      } catch (error) {
+        spinner.stop();
+        displayError(error);
+      } finally {
+        spinner.stop();
+      }
+
+      console.log(chalk.gray(formatTaskTiming(timing)));
       promptNextInput();
-      return;
-    }
+    });
+  });
 
-    if (trimmed.startsWith("/")) {
-      handleSlashCommand(trimmed, {
-        messages,
-        mode,
-        config,
-        usageTracker,
-        setMode: (m) => {
-          mode = m;
-          setChatPrompt();
-        },
-      });
-      promptNextInput();
-      return;
-    }
-
-    drawUserMessage(trimmed);
-
-    const timing = createTaskTiming();
-    const spinner = ora({ text: "AI thinking...", color: "cyan" }).start();
-    const handler = modeRouter.getHandler(mode);
-
-    try {
-      await handler.run(trimmed, {
-        provider,
-        toolRegistry,
-        messages,
-        config,
-        usageTracker,
-        timing,
-        skipConfirm: Boolean(config.yolo),
-        confirmToolCall: (toolCall) => userConfirm(toolCall, rl),
-        output: {
-          onIteration: (iteration) => {
-            if (iteration > 1) {
-              spinner.text = `AI executing... (step ${iteration - 1})`;
-              spinner.start();
-            }
-          },
-          onAssistantMessage: (content) => {
-            spinner.stop();
-            const header = chalk.dim("─── AI ────────────────────────────────────────");
-            const footer = chalk.dim("────────────────────────────────────────────────");
-            console.log(`\n${header}\n${content}\n${footer}\n`);
-          },
-          onTokenUsage: (usage) => {
-            spinner.stop();
-            printTokenUsage(usage);
-          },
-          onToolStart: (toolCall) => {
-            spinner.stop();
-            printToolStart(toolCall);
-          },
-          onToolResult: (toolCall, result, elapsedMs) => {
-            spinner.stop();
-            printToolResult(toolCall, result, elapsedMs);
-          },
-          onWarning: (message) => {
-            spinner.stop();
-            console.log(chalk.yellow(message));
-          },
-        },
-      });
-    } catch (error) {
-      spinner.stop();
-      displayError(error);
-    } finally {
-      spinner.stop();
-    }
-
-    console.log(chalk.gray(formatTaskTiming(timing)));
+  await runSetup(() => {
     promptNextInput();
   });
 
-  promptNextInput();
-
-  rl.on("close", async () => {
-    process.stdin.removeListener("keypress", onKeypress);
-    clearSuggestionBlock();
-    if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
-      process.stdin.setRawMode(false);
-    }
-    await mcpManager.stopAll();
-    console.log();
-    process.exit(0);
+  await runSetup(() => {
+    rl.on("close", async () => {
+      await shutdown({ exit: true, exitCode: 0 });
+    });
   });
 }
