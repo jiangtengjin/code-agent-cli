@@ -44,14 +44,17 @@ describe("UsageTracker", () => {
     const tracker = new UsageTracker();
     tracker.record({ promptTokens: 10, completionTokens: 5, totalTokens: 15 });
 
-    expect(formatUsageSnapshot(tracker.snapshot(), "deepseek-coder")).toContain(
-      "Model: deepseek-coder",
-    );
-    expect(formatUsageSnapshot(tracker.snapshot(), "deepseek-coder")).toContain(
-      "Total tokens: 15",
-    );
-    expect(formatUsageSnapshot(tracker.snapshot(), "deepseek-coder")).toContain(
-      "LLM calls: 1",
+    const summary = formatUsageSnapshot(tracker.snapshot(), "deepseek-coder");
+
+    expect(summary).toBe(
+      [
+        "Token usage",
+        "Model: deepseek-coder",
+        "Prompt tokens: 10",
+        "Completion tokens: 5",
+        "Total tokens: 15",
+        "LLM calls: 1",
+      ].join("\n"),
     );
   });
 });
