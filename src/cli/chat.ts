@@ -69,13 +69,14 @@ function formatMCPSummary(summary: MCPSummary): string {
 
 function displayWelcome(config: Config, provider: LLMProvider, mcpSummary: MCPSummary): void {
   const mcpLine = `${chalk.cyan("│")}  ${formatMCPSummary(mcpSummary)}`;
+  const providerLabel = config.model?.provider ?? provider.name;
 
   console.log(`
 ${chalk.cyan("╭──────────────────────────────────────────────╮")}
 ${chalk.cyan("│")}            ${chalk.bold("Code Agent CLI  v0.1.0")}             ${chalk.cyan("│")}
 ${chalk.cyan("│")}             ${chalk.gray("终端原生编码智能体")}                 ${chalk.cyan("│")}
 ${chalk.cyan("│")}                                              ${chalk.cyan("│")}
-${chalk.cyan("│")}  模型: ${chalk.green(provider.name)}/${chalk.green(config.model?.model ?? "unknown")}
+${chalk.cyan("│")}  模型: ${chalk.green(providerLabel)}/${chalk.green(config.model?.model ?? "unknown")}
 ${chalk.cyan("│")}  API: ${chalk.green(maskApiKey(config.model?.apiKey ?? ""))}
 ${chalk.cyan("│")}  目录: ${chalk.green(process.cwd())}
 ${mcpLine}
@@ -220,6 +221,15 @@ function getUniqueCommand(query: string): SlashCommand | undefined {
   return prefixMatches.length === 1 ? prefixMatches[0] : undefined;
 }
 
+function getExecutableCommandName(commandName: string): string {
+  const lower = commandName.toLowerCase();
+  const exact = COMMANDS.find(
+    (command) => command.name === lower || (command.aliases ?? []).some((alias) => alias === lower),
+  );
+
+  return exact?.name ?? lower;
+}
+
 function getCommonPrefix(values: string[]): string {
   if (values.length === 0) return "";
 
@@ -324,8 +334,9 @@ async function handleSlashCommand(
   const parts = input.slice(1).split(/\s+/);
   const cmd = parts[0].toLowerCase();
   const args = parts.slice(1);
+  const executableCommand = getExecutableCommandName(cmd);
 
-  switch (cmd) {
+  switch (executableCommand) {
     case "help":
       console.log(`
 ${chalk.bold("可用命令:")}

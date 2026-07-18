@@ -120,7 +120,7 @@ export class ConfigResolver {
     const config: Partial<Config> = {};
     if (options.mode) config.mode = options.mode;
     if (options.model) {
-      config.model = { provider: "", model: options.model };
+      config.model = { model: options.model } as LLMConfig;
     }
     if (options.yolo) config.yolo = true;
     return config;

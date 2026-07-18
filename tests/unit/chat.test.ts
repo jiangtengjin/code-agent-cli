@@ -292,6 +292,7 @@ describe('startChat', () => {
     const instance = mcpManagerMocks.instances[0]
     expect(instance.startAll).toHaveBeenCalledTimes(1)
     expect(instance.getSummary).toHaveBeenCalledTimes(1)
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('deepseek/test'))
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('MCP: 2 servers / 5 tools'))
 
     logSpy.mockRestore()
@@ -421,6 +422,26 @@ describe('startChat', () => {
     } as any)
 
     await lineCallbacks[0]('/clear')
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('已清空'))
+
+    logSpy.mockRestore()
+  })
+
+  it('processes slash command aliases', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    const lineCallbacks: Array<(input: string) => void> = []
+    mockRl.on.mockImplementation((_event: string, cb: (input: string) => void) => {
+      lineCallbacks.push(cb)
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+    } as any)
+
+    await lineCallbacks[0]('/cls')
 
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('已清空'))
 
