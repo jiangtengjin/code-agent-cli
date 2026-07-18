@@ -52,7 +52,7 @@ They are untracked and unrelated.
 - Create: `src/session/usage.ts`
 - Create: `tests/unit/session/usage.test.ts`
 
-- [ ] **Step 1: Write the failing usage tracker tests**
+- [x] **Step 1: Write the failing usage tracker tests**
 
 Create `tests/unit/session/usage.test.ts`:
 
@@ -116,7 +116,7 @@ describe("UsageTracker", () => {
 });
 ```
 
-- [ ] **Step 2: Run the usage tests and verify they fail**
+- [x] **Step 2: Run the usage tests and verify they fail**
 
 Run:
 
@@ -126,7 +126,7 @@ npm test -- tests/unit/session/usage.test.ts
 
 Expected: fail with a module resolution error for `src/session/usage.js`.
 
-- [ ] **Step 3: Implement `src/session/usage.ts`**
+- [x] **Step 3: Implement `src/session/usage.ts`**
 
 Create `src/session/usage.ts`:
 
@@ -174,7 +174,7 @@ export function formatUsageSnapshot(snapshot: UsageSnapshot, modelName: string):
 }
 ```
 
-- [ ] **Step 4: Run the usage tests and verify they pass**
+- [x] **Step 4: Run the usage tests and verify they pass**
 
 Run:
 
@@ -184,7 +184,7 @@ npm test -- tests/unit/session/usage.test.ts
 
 Expected: all tests in `usage.test.ts` pass.
 
-- [ ] **Step 5: Commit usage tracker**
+- [x] **Step 5: Commit usage tracker**
 
 Run:
 
@@ -209,7 +209,7 @@ Expected: commit succeeds with only the usage tracker files.
 - Create: `tests/unit/modes/router.test.ts`
 - Create: `tests/unit/modes/execution.test.ts`
 
-- [ ] **Step 1: Write failing router tests**
+- [x] **Step 1: Write failing router tests**
 
 Create `tests/unit/modes/router.test.ts`:
 
@@ -255,7 +255,7 @@ describe("ModeRouter", () => {
 });
 ```
 
-- [ ] **Step 2: Write failing execution loop tests**
+- [x] **Step 2: Write failing execution loop tests**
 
 Create `tests/unit/modes/execution.test.ts`:
 
@@ -392,7 +392,7 @@ describe("mode execution loop", () => {
 });
 ```
 
-- [ ] **Step 3: Run mode tests and verify they fail**
+- [x] **Step 3: Run mode tests and verify they fail**
 
 Run:
 
@@ -402,7 +402,7 @@ npm test -- tests/unit/modes/router.test.ts tests/unit/modes/execution.test.ts
 
 Expected: fail with module resolution errors for the new `src/modes/*` and `src/session/execution.js` files.
 
-- [ ] **Step 4: Implement mode handler interfaces**
+- [x] **Step 4: Implement mode handler interfaces**
 
 Create `src/modes/handler.ts`:
 
@@ -452,7 +452,7 @@ export interface ModeHandler {
 }
 ```
 
-- [ ] **Step 5: Implement shared execution loop**
+- [x] **Step 5: Implement shared execution loop**
 
 Create `src/session/execution.ts`:
 
@@ -629,7 +629,7 @@ export async function runExecutionLoop(
 }
 ```
 
-- [ ] **Step 6: Implement normal and auto handlers**
+- [x] **Step 6: Implement normal and auto handlers**
 
 Create `src/modes/normal.ts`:
 
@@ -663,7 +663,7 @@ export class AutoModeHandler implements ModeHandler {
 }
 ```
 
-- [ ] **Step 7: Implement `ModeRouter`**
+- [x] **Step 7: Implement `ModeRouter`**
 
 Create `src/modes/router.ts`:
 
@@ -684,7 +684,7 @@ export class ModeRouter {
 }
 ```
 
-- [ ] **Step 8: Run mode tests and verify they pass**
+- [x] **Step 8: Run mode tests and verify they pass**
 
 Run:
 
@@ -694,7 +694,7 @@ npm test -- tests/unit/modes/router.test.ts tests/unit/modes/execution.test.ts
 
 Expected: all tests in `router.test.ts` and `execution.test.ts` pass.
 
-- [ ] **Step 9: Commit mode execution core**
+- [x] **Step 9: Commit mode execution core**
 
 Run:
 
@@ -714,7 +714,7 @@ Expected: commit succeeds with only mode and execution files.
 - Modify: `src/cli/chat.ts`
 - Modify: `tests/unit/chat.test.ts`
 
-- [ ] **Step 1: Write failing chat tests for `/usage` and mode caps**
+- [x] **Step 1: Write failing chat tests for `/usage` and mode caps**
 
 Append these tests inside `describe('slash command suggestions', ...)` in `tests/unit/chat.test.ts`:
 
@@ -800,7 +800,7 @@ Append these tests inside `describe('startChat', ...)` in `tests/unit/chat.test.
   });
 ```
 
-- [ ] **Step 2: Run chat tests and verify they fail**
+- [x] **Step 2: Run chat tests and verify they fail**
 
 Run:
 
@@ -810,7 +810,7 @@ npm test -- tests/unit/chat.test.ts
 
 Expected: fail because `/usage` is not registered and chat still has a hard-coded `50` loop.
 
-- [ ] **Step 3: Export timing helpers from the shared execution module**
+- [x] **Step 3: Export timing helpers from the shared execution module**
 
 In `src/cli/chat.ts`, remove local `nowMs`, `elapsedSince`, `createTaskTiming`, and `formatTaskTiming`. Add this import near the other imports:
 
@@ -827,7 +827,7 @@ Then add this export below the imports so existing tests can still import `forma
 export { formatTaskTiming } from "../session/execution.js";
 ```
 
-- [ ] **Step 4: Add usage command metadata**
+- [x] **Step 4: Add usage command metadata**
 
 In `src/cli/chat.ts`, add this import:
 
@@ -846,7 +846,7 @@ Add this entry to the `COMMANDS` array before `exit`:
   },
 ```
 
-- [ ] **Step 5: Update slash command handling**
+- [x] **Step 5: Update slash command handling**
 
 Update the `handleSlashCommand` context type in `src/cli/chat.ts`:
 
@@ -881,7 +881,7 @@ Add this switch case before `exit`:
       break;
 ```
 
-- [ ] **Step 6: Replace prompt execution loop with `ModeRouter`**
+- [x] **Step 6: Replace prompt execution loop with `ModeRouter`**
 
 Add this import to `src/cli/chat.ts`:
 
@@ -945,7 +945,7 @@ In `runPrompt`, replace the current `messages` initialization and loop with:
   console.log(chalk.gray(formatTaskTiming(timing)));
 ```
 
-- [ ] **Step 7: Replace interactive execution loop with `ModeRouter`**
+- [x] **Step 7: Replace interactive execution loop with `ModeRouter`**
 
 In `startChat`, add:
 
@@ -1035,7 +1035,7 @@ Remove the old `messages.push({ role: "user", content: trimmed });` before the l
 
 Delete the local helper block from `type ConfirmToolCall = ...` through the closing brace of `handleToolCalls(...)`, immediately before `function userConfirm(...)`. The shared implementation in `src/session/execution.ts` replaces that block.
 
-- [ ] **Step 8: Run chat tests and verify they pass**
+- [x] **Step 8: Run chat tests and verify they pass**
 
 Run:
 
@@ -1045,7 +1045,7 @@ npm test -- tests/unit/chat.test.ts tests/unit/modes/router.test.ts tests/unit/m
 
 Expected: all targeted tests pass.
 
-- [ ] **Step 9: Commit CLI mode refactor**
+- [x] **Step 9: Commit CLI mode refactor**
 
 Run:
 
@@ -1065,7 +1065,7 @@ Expected: commit succeeds with chat refactor files only.
 - Modify: `package.json`
 - Modify: `pnpm-lock.yaml`
 
-- [ ] **Step 1: Install the official MCP SDK production line**
+- [x] **Step 1: Install the official MCP SDK production line**
 
 Run:
 
@@ -1081,7 +1081,7 @@ Expected:
 
 If this command fails with a network or registry error, rerun it with escalated permissions as required by the environment.
 
-- [ ] **Step 2: Verify dependency metadata**
+- [x] **Step 2: Verify dependency metadata**
 
 Run:
 
@@ -1098,7 +1098,7 @@ Expected: dependency block contains entries equivalent to:
 
 The exact SDK patch/minor version can be higher because the install command resolves the current v1 production release.
 
-- [ ] **Step 3: Run typecheck after dependency installation**
+- [x] **Step 3: Run typecheck after dependency installation**
 
 Run:
 
@@ -1108,7 +1108,7 @@ npm run typecheck
 
 Expected: typecheck passes, because no SDK imports have been added yet.
 
-- [ ] **Step 4: Commit dependency update**
+- [x] **Step 4: Commit dependency update**
 
 Run:
 
@@ -1129,7 +1129,7 @@ Expected: commit succeeds with dependency files only.
 - Create: `src/tools/mcp/manager.ts`
 - Create: `tests/unit/tools/mcp/manager.test.ts`
 
-- [ ] **Step 1: Write failing MCP manager tests**
+- [x] **Step 1: Write failing MCP manager tests**
 
 Create `tests/unit/tools/mcp/manager.test.ts`:
 
@@ -1250,7 +1250,7 @@ describe("MCPServerManager", () => {
 });
 ```
 
-- [ ] **Step 2: Run MCP manager tests and verify they fail**
+- [x] **Step 2: Run MCP manager tests and verify they fail**
 
 Run:
 
@@ -1260,7 +1260,7 @@ npm test -- tests/unit/tools/mcp/manager.test.ts
 
 Expected: fail with module resolution errors for `src/tools/mcp/manager.js`.
 
-- [ ] **Step 3: Implement MCP SDK client wrapper**
+- [x] **Step 3: Implement MCP SDK client wrapper**
 
 Create `src/tools/mcp/client.ts`:
 
@@ -1319,7 +1319,7 @@ export class MCPClient implements MCPClientLike {
 }
 ```
 
-- [ ] **Step 4: Implement MCP manager and tool registration**
+- [x] **Step 4: Implement MCP manager and tool registration**
 
 Create `src/tools/mcp/manager.ts`:
 
@@ -1463,7 +1463,7 @@ export class MCPServerManager {
 }
 ```
 
-- [ ] **Step 5: Run MCP manager tests and verify they pass**
+- [x] **Step 5: Run MCP manager tests and verify they pass**
 
 Run:
 
@@ -1473,7 +1473,7 @@ npm test -- tests/unit/tools/mcp/manager.test.ts
 
 Expected: all MCP manager tests pass.
 
-- [ ] **Step 6: Run typecheck to catch SDK import issues**
+- [x] **Step 6: Run typecheck to catch SDK import issues**
 
 Run:
 
@@ -1483,7 +1483,7 @@ npm run typecheck
 
 Expected: typecheck passes. If SDK v1 types require a small import-path adjustment, keep the public `MCPClientLike` and manager API unchanged and update only `src/tools/mcp/client.ts`.
 
-- [ ] **Step 7: Commit MCP client and manager**
+- [x] **Step 7: Commit MCP client and manager**
 
 Run:
 
@@ -1504,7 +1504,7 @@ Expected: commit succeeds with MCP files only.
 - Modify: `tests/unit/chat.test.ts`
 - Modify: `docs/方案设计文档.md`
 
-- [ ] **Step 1: Mock MCP manager in chat tests**
+- [x] **Step 1: Mock MCP manager in chat tests**
 
 Add this hoisted mock near the existing `providerMocks` in `tests/unit/chat.test.ts`:
 
@@ -1536,7 +1536,7 @@ In each `beforeEach`, add:
     mcpManagerMocks.getSummary.mockReturnValue({ servers: 0, tools: 0 });
 ```
 
-- [ ] **Step 2: Write failing startup/status tests**
+- [x] **Step 2: Write failing startup/status tests**
 
 Append these tests inside `describe('runPrompt', ...)` in `tests/unit/chat.test.ts`:
 
@@ -1585,7 +1585,7 @@ Append this test inside `describe('startChat', ...)`:
   });
 ```
 
-- [ ] **Step 3: Run chat MCP tests and verify they fail**
+- [x] **Step 3: Run chat MCP tests and verify they fail**
 
 Run:
 
@@ -1595,7 +1595,7 @@ npm test -- tests/unit/chat.test.ts
 
 Expected: fail because `src/cli/chat.ts` does not create or use `MCPServerManager` yet.
 
-- [ ] **Step 4: Import and start MCP manager in chat flows**
+- [x] **Step 4: Import and start MCP manager in chat flows**
 
 Add this import to `src/cli/chat.ts`:
 
@@ -1691,7 +1691,7 @@ Update the `rl.on("close", ...)` callback to be async and stop MCP:
   });
 ```
 
-- [ ] **Step 5: Run chat MCP tests and verify they pass**
+- [x] **Step 5: Run chat MCP tests and verify they pass**
 
 Run:
 
@@ -1701,7 +1701,7 @@ npm test -- tests/unit/chat.test.ts
 
 Expected: all chat tests pass.
 
-- [ ] **Step 6: Update Phase 1d checklist in the project design document**
+- [x] **Step 6: Update Phase 1d checklist in the project design document**
 
 In `docs/方案设计文档.md`, update only the Phase 1d task checkboxes for items implemented in this phase:
 
@@ -1717,7 +1717,7 @@ In `docs/方案设计文档.md`, update only the Phase 1d task checkboxes for it
 
 Do not mark "完善 TUI 交互" or "端到端业务流程跑通" until full verification completes.
 
-- [ ] **Step 7: Run all unit tests**
+- [x] **Step 7: Run all unit tests**
 
 Run:
 
@@ -1727,7 +1727,7 @@ npm test
 
 Expected: all unit tests pass; integration tests that are skipped remain skipped.
 
-- [ ] **Step 8: Commit MCP integration**
+- [x] **Step 8: Commit MCP integration**
 
 Run:
 
@@ -1747,7 +1747,7 @@ Expected: commit succeeds with chat integration and design checklist updates.
 - Modify: `docs/superpowers/plans/2026-07-18-phase-1d-normal-auto-mcp.md`
 - Modify: `docs/方案设计文档.md`
 
-- [ ] **Step 1: Run full test suite**
+- [x] **Step 1: Run full test suite**
 
 Run:
 
@@ -1757,7 +1757,7 @@ npm test
 
 Expected: all tests pass; any skipped tests are reported as skipped, not failed.
 
-- [ ] **Step 2: Run lint**
+- [x] **Step 2: Run lint**
 
 Run:
 
@@ -1767,7 +1767,7 @@ npm run lint
 
 Expected: Biome exits with code 0.
 
-- [ ] **Step 3: Run typecheck**
+- [x] **Step 3: Run typecheck**
 
 Run:
 
@@ -1777,7 +1777,7 @@ npm run typecheck
 
 Expected: TypeScript exits with code 0.
 
-- [ ] **Step 4: Run build**
+- [x] **Step 4: Run build**
 
 Run:
 
@@ -1787,7 +1787,7 @@ npm run build
 
 Expected: tsup exits with code 0 and writes `dist`.
 
-- [ ] **Step 5: Check working tree and staged changes**
+- [x] **Step 5: Check working tree and staged changes**
 
 Run:
 
@@ -1797,7 +1797,7 @@ git status --short
 
 Expected: only intended tracked files are modified and the unrelated `.idea/` and `login-app/` directories remain untracked.
 
-- [ ] **Step 6: Mark final Phase 1d checklist items complete**
+- [x] **Step 6: Mark final Phase 1d checklist items complete**
 
 If Steps 1-4 pass, update `docs/方案设计文档.md`:
 
@@ -1808,7 +1808,7 @@ If Steps 1-4 pass, update `docs/方案设计文档.md`:
 
 Also update this plan file by checking the completed task boxes.
 
-- [ ] **Step 7: Commit verification updates**
+- [x] **Step 7: Commit verification updates**
 
 Run:
 
@@ -1819,7 +1819,7 @@ git commit -m "docs: mark phase 1d complete"
 
 Expected: commit succeeds with documentation status updates.
 
-- [ ] **Step 8: Report final state**
+- [x] **Step 8: Report final state**
 
 Run:
 
