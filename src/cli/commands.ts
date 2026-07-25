@@ -30,6 +30,7 @@ export function createProgram(): Command {
     .description("终端原生编码智能体工具")
     .version("0.1.0")
     .option("-p, --prompt <text>", "非交互模式，直接执行任务")
+    .option("--continue", "恢复当前工作区最近一次会话")
     .option("-m, --mode <mode>", "指定对话模式")
     .option("--model <model>", "指定模型")
     .option("--yolo", "自主模式，跳过用户确认")
@@ -47,7 +48,9 @@ export function createProgram(): Command {
         await runPrompt(config, options.prompt);
         return;
       }
-      await startChat(config);
+      await startChat(config, {
+        continueLast: Boolean(options.continue),
+      });
     });
 
   // code-agent init — 配置向导
@@ -102,6 +105,26 @@ export function createProgram(): Command {
   mcpCmd.command("list").action(mcpList);
 
   program.addCommand(mcpCmd);
+
+  program
+    .command("resume")
+    .description("恢复历史会话")
+    .argument("[query]", "会话 ID 或标题前缀")
+    .option("--last", "恢复当前工作区最近一次会话")
+    .option("--all", "跨工作区检索")
+    .action(async (query: string | undefined, options: { last?: boolean; all?: boolean }) => {
+      const { ConfigResolver } = await import("../config/resolver.js");
+      const { startChat } = await import("./chat.js");
+      const resolver = new ConfigResolver();
+      const config = await resolver.resolve({});
+
+      await startChat(config, {
+        continueLast: false,
+        resumeLast: Boolean(options.last || !query),
+        resumeAll: Boolean(options.all),
+        resumeQuery: query,
+      });
+    });
 
   return program;
 }

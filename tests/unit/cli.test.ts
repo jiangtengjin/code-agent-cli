@@ -72,6 +72,14 @@ describe("CLI command framework", () => {
     expect(mcpCmd?.description()).toBe("管理 MCP 服务");
   });
 
+  it("includes the resume subcommand", () => {
+    const program = createProgram();
+    const resumeCmd = program.commands.find((cmd) => cmd.name() === "resume");
+
+    expect(resumeCmd).toBeDefined();
+    expect(resumeCmd?.description()).toBe("恢复历史会话");
+  });
+
   it("config subcommand includes set/get/list/edit", () => {
     const program = createProgram();
     const configCmd = program.commands.find((cmd) => cmd.name() === "config")!;
@@ -101,6 +109,7 @@ describe("CLI command framework", () => {
     expect(opts).toContain("--mode");
     expect(opts).toContain("--model");
     expect(opts).toContain("--yolo");
+    expect(opts).toContain("--continue");
     expect(opts).toContain("--debug");
     expect(opts).toContain("--version");
   });
@@ -122,6 +131,48 @@ describe("CLI command framework", () => {
     expect(cliMocks.resolve).toHaveBeenCalledWith(expect.objectContaining({ prompt: "hello" }));
     expect(cliMocks.runPrompt).toHaveBeenCalledWith(config, "hello");
     expect(cliMocks.startChat).not.toHaveBeenCalled();
+  });
+
+  it("passes the continue intent to interactive chat startup", async () => {
+    const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
+    cliMocks.resolve.mockResolvedValue(config);
+    const program = createProgram();
+
+    await program.parseAsync(["--continue"], { from: "user" });
+
+    expect(cliMocks.startChat).toHaveBeenCalledWith(config, {
+      continueLast: true,
+    });
+  });
+
+  it("resumes the latest session from the resume subcommand", async () => {
+    const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
+    cliMocks.resolve.mockResolvedValue(config);
+    const program = createProgram();
+
+    await program.parseAsync(["resume", "--last"], { from: "user" });
+
+    expect(cliMocks.startChat).toHaveBeenCalledWith(config, {
+      continueLast: false,
+      resumeLast: true,
+      resumeAll: false,
+      resumeQuery: undefined,
+    });
+  });
+
+  it("resumes a matching session by query", async () => {
+    const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
+    cliMocks.resolve.mockResolvedValue(config);
+    const program = createProgram();
+
+    await program.parseAsync(["resume", "fix-auth-timeout", "--all"], { from: "user" });
+
+    expect(cliMocks.startChat).toHaveBeenCalledWith(config, {
+      continueLast: false,
+      resumeLast: false,
+      resumeAll: true,
+      resumeQuery: "fix-auth-timeout",
+    });
   });
 
   it("passes through child command flags for mcp add", async () => {

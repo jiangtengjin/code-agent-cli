@@ -154,4 +154,92 @@ describe("SessionStore", () => {
       status: "archived",
     });
   });
+
+  it("finds the latest resumable session in the current workspace", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "code-agent-sessions-"));
+    tempDirs.push(tempDir);
+    const store = new SessionStore(tempDir);
+
+    await store.saveSession(
+      buildState({
+        sessionId: "session-1",
+        workspaceKey: "workspace-a",
+        workspacePath: "/repo-a",
+        lastActiveAt: "2026-07-25T12:01:00.000Z",
+      }),
+    );
+    await store.saveSession(
+      buildState({
+        sessionId: "session-2",
+        workspaceKey: "workspace-a",
+        workspacePath: "/repo-a",
+        kind: "prompt",
+        lastActiveAt: "2026-07-25T12:03:00.000Z",
+        updatedAt: "2026-07-25T12:03:00.000Z",
+      }),
+    );
+    await store.saveSession(
+      buildState({
+        sessionId: "session-3",
+        workspaceKey: "workspace-a",
+        workspacePath: "/repo-a",
+        status: "archived",
+        lastActiveAt: "2026-07-25T12:04:00.000Z",
+        updatedAt: "2026-07-25T12:04:00.000Z",
+      }),
+    );
+    await store.saveSession(
+      buildState({
+        sessionId: "session-4",
+        workspaceKey: "workspace-b",
+        workspacePath: "/repo-b",
+        lastActiveAt: "2026-07-25T12:05:00.000Z",
+        updatedAt: "2026-07-25T12:05:00.000Z",
+      }),
+    );
+
+    const summary = await store.findLatestSession({
+      workspaceKey: "workspace-a",
+      kind: "interactive",
+    });
+
+    expect(summary?.id).toBe("session-1");
+  });
+
+  it("matches resumable sessions by id or title prefix", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "code-agent-sessions-"));
+    tempDirs.push(tempDir);
+    const store = new SessionStore(tempDir);
+
+    await store.saveSession(
+      buildState({
+        sessionId: "abc123-session",
+        workspaceKey: "workspace-a",
+        workspacePath: "/repo-a",
+        title: "fix-auth-timeout",
+      }),
+    );
+    await store.saveSession(
+      buildState({
+        sessionId: "def456-session",
+        workspaceKey: "workspace-b",
+        workspacePath: "/repo-b",
+        title: "other-task",
+      }),
+    );
+
+    const byId = await store.findSessionByQuery("abc123", {
+      workspaceKey: "workspace-a",
+    });
+    const byTitle = await store.findSessionByQuery("fix-auth", {
+      workspaceKey: "workspace-a",
+    });
+    const crossWorkspace = await store.findSessionByQuery("def456", {
+      includeAllWorkspaces: true,
+    });
+
+    expect(byId?.id).toBe("abc123-session");
+    expect(byTitle?.id).toBe("abc123-session");
+    expect(crossWorkspace?.id).toBe("def456-session");
+  });
 });

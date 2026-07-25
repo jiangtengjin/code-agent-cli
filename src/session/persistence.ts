@@ -55,6 +55,18 @@ export class SessionPersistence {
     this.workspace = await resolveWorkspace(this.cwd);
   }
 
+  hydrate(state: SessionState): void {
+    this.workspace = {
+      key: state.workspaceKey,
+      path: state.workspacePath,
+    };
+    this.session = structuredClone(state);
+    this.status = state.status;
+    this.lastPersistedMessageCount = state.messages.length;
+    this.lastPersistedPlanState = JSON.stringify(state.pendingPlan ?? null);
+    this.lastPersistedStatus = state.status;
+  }
+
   async updateStatus(status: SessionStatus, reason?: string): Promise<void> {
     this.status = status;
 

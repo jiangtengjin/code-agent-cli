@@ -485,6 +485,143 @@ describe('startChat', () => {
     logSpy.mockRestore()
   })
 
+  it('restores the latest session state with --continue', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({ content: 'Step completed', model: 'test' })
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-continue-'))
+    tempDirs.push(tempDir)
+    const { SessionStore } = await import('../../src/session/store.js')
+    const { createSessionState } = await import('../../src/session/runtime.js')
+    const { resolveWorkspace } = await import('../../src/session/workspace.js')
+    const { startChat } = await import('../../src/cli/chat.js')
+    const workspace = await resolveWorkspace(process.cwd())
+    const store = new SessionStore(tempDir)
+    const state = createSessionState({
+      sessionId: 'session-continue',
+      kind: 'interactive',
+      mode: 'plan',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    state.messages = [
+      { role: 'user', content: 'add jwt auth' },
+      { role: 'assistant', content: '[PLAN] Plan summary' },
+    ]
+    state.pendingPlan = {
+      originalTask: 'add jwt auth',
+      summary: 'Plan summary',
+      steps: [{ title: 'Inspect auth flow', prompt: 'inspect auth flow', status: 'pending' }],
+    }
+    state.usage = {
+      promptTokens: 10,
+      completionTokens: 5,
+      totalTokens: 15,
+      calls: 1,
+    }
+    state.cost = {
+      currency: '¥',
+      totalCost: 0.004,
+      byModel: {},
+    }
+    state.status = 'awaiting_plan_approval'
+    state.title = 'add jwt auth'
+    state.updatedAt = '2026-07-25T12:05:00.000Z'
+    state.lastActiveAt = '2026-07-25T12:05:00.000Z'
+    await store.saveSession(state)
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat(
+      {
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        sessions: {
+          enabled: true,
+          storePath: tempDir,
+          defaultScope: 'workspace',
+          includePromptSessions: false,
+        },
+      } as any,
+      { continueLast: true } as any,
+    )
+
+    await callbacks.line('/usage')
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Total tokens: 15'))
+
+    await callbacks.line('y')
+
+    expect(providerMocks.chat).toHaveBeenCalledTimes(1)
+    expect(providerMocks.chat.mock.calls[0][0].messages).toEqual(
+      expect.arrayContaining([
+        { role: 'user', content: 'add jwt auth' },
+        { role: 'assistant', content: '[PLAN] Plan summary' },
+        { role: 'user', content: 'inspect auth flow' },
+      ]),
+    )
+
+    logSpy.mockRestore()
+  })
+
+  it('restores a matching session by resume query', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({ content: 'Resumed reply', model: 'test' })
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-resume-'))
+    tempDirs.push(tempDir)
+    const { SessionStore } = await import('../../src/session/store.js')
+    const { createSessionState } = await import('../../src/session/runtime.js')
+    const { resolveWorkspace } = await import('../../src/session/workspace.js')
+    const { startChat } = await import('../../src/cli/chat.js')
+    const workspace = await resolveWorkspace(process.cwd())
+    const store = new SessionStore(tempDir)
+    const state = createSessionState({
+      sessionId: 'fix-auth-timeout-123',
+      kind: 'interactive',
+      mode: 'normal',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    state.messages = [{ role: 'user', content: 'previous context' }]
+    state.title = 'fix-auth-timeout'
+    state.updatedAt = '2026-07-25T12:05:00.000Z'
+    state.lastActiveAt = '2026-07-25T12:05:00.000Z'
+    await store.saveSession(state)
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat(
+      {
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        sessions: {
+          enabled: true,
+          storePath: tempDir,
+          defaultScope: 'workspace',
+          includePromptSessions: false,
+        },
+      } as any,
+      { resumeQuery: 'fix-auth', resumeAll: false } as any,
+    )
+
+    await callbacks.line('next step')
+
+    expect(providerMocks.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          { role: 'user', content: 'previous context' },
+          { role: 'user', content: 'next step' },
+        ],
+      }),
+    )
+
+    logSpy.mockRestore()
+  })
+
   it('processes slash /clear command', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const { startChat } = await import('../../src/cli/chat.js')

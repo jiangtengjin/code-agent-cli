@@ -18,6 +18,12 @@ type ListSessionsOptions = {
   includeArchived?: boolean;
 };
 
+type FindSessionOptions = {
+  workspaceKey?: string;
+  kind?: SessionState["kind"];
+  includeAllWorkspaces?: boolean;
+};
+
 async function ensureDir(dirPath: string): Promise<void> {
   await mkdir(dirPath, { recursive: true });
 }
@@ -105,6 +111,46 @@ export class SessionStore {
         }
         return true;
       }),
+    );
+  }
+
+  async findLatestSession(options: FindSessionOptions = {}): Promise<SessionSummary | undefined> {
+    const sessions = await this.listSessions({
+      workspaceKey: options.includeAllWorkspaces ? undefined : options.workspaceKey,
+      kind: options.kind,
+    });
+
+    return sessions[0];
+  }
+
+  async findSessionByQuery(
+    query: string,
+    options: FindSessionOptions = {},
+  ): Promise<SessionSummary | undefined> {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return undefined;
+    }
+
+    const sessions = await this.listSessions({
+      workspaceKey: options.includeAllWorkspaces ? undefined : options.workspaceKey,
+      kind: options.kind,
+      includeArchived: false,
+    });
+
+    const exactMatch = sessions.find(
+      (session) =>
+        session.id.toLowerCase() === normalizedQuery ||
+        session.title.toLowerCase() === normalizedQuery,
+    );
+    if (exactMatch) {
+      return exactMatch;
+    }
+
+    return sessions.find(
+      (session) =>
+        session.id.toLowerCase().startsWith(normalizedQuery) ||
+        session.title.toLowerCase().startsWith(normalizedQuery),
     );
   }
 

@@ -19,6 +19,7 @@ import {
 /** CLI 命令行选项 */
 export interface CLIOptions {
   prompt?: string;
+  continue?: boolean;
   mode?: ChatMode;
   model?: string;
   yolo?: boolean;

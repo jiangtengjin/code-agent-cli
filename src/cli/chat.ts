@@ -8,13 +8,16 @@ import { executeApprovedPlan, formatPlanState } from "../modes/plan.js";
 import { ModeRouter } from "../modes/router.js";
 import { createTaskTiming, formatTaskTiming } from "../session/execution.js";
 import { SessionPersistence } from "../session/persistence.js";
+import { SessionStore } from "../session/store.js";
 import { UsageTracker, formatUsageSnapshot } from "../session/usage.js";
+import { resolveWorkspace } from "../session/workspace.js";
 import { createDefaultToolRegistry } from "../tools/built-in/index.js";
 import { MCPServerManager, type MCPSummary } from "../tools/mcp/manager.js";
 import type { Config } from "../types/config.js";
 import type { ChatMode } from "../types/mode.js";
 import type { PlanState } from "../types/plan.js";
 import type { LLMMessage, LLMToolCall, LLMUsage } from "../types/provider.js";
+import type { SessionState } from "../types/session.js";
 import type { ToolResult } from "../types/tool.js";
 import { maskApiKey } from "../utils/api-key.js";
 import { formatDuration } from "../utils/format.js";
@@ -509,6 +512,44 @@ function createProviderOrExit(config: Config): LLMProvider | null {
   }
 }
 
+export type StartChatOptions = {
+  continueLast?: boolean;
+  resumeLast?: boolean;
+  resumeAll?: boolean;
+  resumeQuery?: string;
+};
+
+async function loadInitialSession(
+  config: Config,
+  options: StartChatOptions,
+): Promise<SessionState | undefined> {
+  if (!config.sessions?.enabled || !config.sessions.storePath) {
+    return undefined;
+  }
+
+  if (!options.continueLast && !options.resumeLast && !options.resumeQuery) {
+    return undefined;
+  }
+
+  const workspace = await resolveWorkspace(process.cwd());
+  const store = new SessionStore(config.sessions.storePath);
+  const queryOptions = {
+    workspaceKey: workspace.key,
+    kind: "interactive" as const,
+    includeAllWorkspaces: Boolean(options.resumeAll),
+  };
+
+  const summary = options.resumeQuery
+    ? await store.findSessionByQuery(options.resumeQuery, queryOptions)
+    : await store.findLatestSession(queryOptions);
+
+  if (!summary) {
+    return undefined;
+  }
+
+  return store.loadSession(summary.id);
+}
+
 export async function runPrompt(config: Config, prompt: string): Promise<void> {
   const provider = createProviderOrExit(config);
   if (!provider) {
@@ -608,7 +649,10 @@ export async function runPrompt(config: Config, prompt: string): Promise<void> {
   console.log(chalk.gray(formatTaskTiming(timing)));
 }
 
-export async function startChat(config: Config): Promise<void> {
+export async function startChat(
+  config: Config,
+  options: StartChatOptions = {},
+): Promise<void> {
   if (!config.model?.apiKey && !config.models && config.model?.provider !== "ollama") {
     console.error(chalk.red("API Key 未配置。请运行 code-agent init 初始化配置。"));
     process.exit(1);
@@ -625,12 +669,13 @@ export async function startChat(config: Config): Promise<void> {
       console.log(chalk.yellow(message));
     },
   });
-  const messages: LLMMessage[] = [];
-  const usageTracker = new UsageTracker();
-  const costTracker = new CostTracker(config.costGuard);
+  const initialSession = await loadInitialSession(config, options);
+  const messages: LLMMessage[] = initialSession ? [...initialSession.messages] : [];
+  const usageTracker = new UsageTracker(initialSession?.usage);
+  const costTracker = new CostTracker(config.costGuard, initialSession?.cost);
   const modeRouter = new ModeRouter();
-  let mode: ChatMode = (config.mode as ChatMode) ?? "normal";
-  let pendingPlan: PlanState | undefined;
+  let mode: ChatMode = initialSession?.mode ?? ((config.mode as ChatMode) ?? "normal");
+  let pendingPlan: PlanState | undefined = initialSession?.pendingPlan;
   const persistence = new SessionPersistence({
     enabled: config.sessions?.enabled !== false,
     storePath: config.sessions?.storePath,
@@ -748,6 +793,9 @@ export async function startChat(config: Config): Promise<void> {
   }
 
   await persistence.initialize();
+  if (initialSession) {
+    persistence.hydrate(initialSession);
+  }
   await mcpManager.startAll();
   await runSetup(() => displayWelcome(config, provider, mcpManager.getSummary()));
 
