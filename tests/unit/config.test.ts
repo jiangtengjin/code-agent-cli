@@ -43,6 +43,46 @@ describe("ConfigSchema 验证", () => {
     expect(result.success).toBe(true);
   });
 
+  it("应接受二期新增的配置块", () => {
+    const result = ConfigSchema.safeParse({
+      mode: "plan",
+      terminal: {
+        shell: "powershell",
+        timeout: 60_000,
+      },
+      costGuard: {
+        monthlyBudget: 10,
+        warnAtPercent: 80,
+      },
+      rag: {
+        enabled: true,
+        maxResults: 8,
+        chunkSize: 1200,
+      },
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("应拒绝非法的 mode", () => {
+    const result = ConfigSchema.safeParse({
+      mode: "turbo",
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("应拒绝超出范围的成本告警百分比", () => {
+    const result = ConfigSchema.safeParse({
+      costGuard: {
+        monthlyBudget: 10,
+        warnAtPercent: 120,
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it("应接受可选的 temperature 和 maxTokens", () => {
     const result = LLMConfigSchema.safeParse({
       provider: "qwen",

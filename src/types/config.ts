@@ -1,3 +1,5 @@
+import type { ChatMode } from "./mode.js";
+
 /**
  * 配置类型定义
  *
@@ -71,7 +73,7 @@ export interface Config {
   /** 多模型配置，用于模型路由（按任务类型自动选择） */
   models?: Record<string, LLMConfig>;
   /** 默认对话模式：normal / auto / plan / edit */
-  mode?: string;
+  mode?: ChatMode;
   /** 自主模式：跳过用户确认，AI 直接执行 */
   yolo?: boolean;
   /** MCP 服务端列表 */

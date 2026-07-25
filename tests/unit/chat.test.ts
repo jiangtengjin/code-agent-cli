@@ -155,6 +155,20 @@ describe('slash command suggestions', () => {
       replacement: 'usage ',
     })
   })
+
+  it('suggests the cost command', async () => {
+    const { getSlashCommandSuggestions, getSlashCommandCompletion } = await import('../../src/cli/chat.js')
+
+    expect(getSlashCommandSuggestions('/co')[0]).toMatchObject({
+      kind: 'command',
+      value: 'cost',
+    })
+    expect(getSlashCommandCompletion('/co')).toEqual({
+      start: 1,
+      end: 3,
+      replacement: 'cost ',
+    })
+  })
 })
 
 describe('task timing', () => {
@@ -612,6 +626,34 @@ describe('startChat', () => {
     logSpy.mockRestore()
   })
 
+  it('prints cumulative cost usage with /cost', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({
+      content: 'reply with cost',
+      model: 'deepseek-coder',
+      usage: { promptTokens: 1000, completionTokens: 500, totalTokens: 1500 },
+    })
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    const lineCallbacks: Array<(input: string) => Promise<void> | void> = []
+    mockRl.on.mockImplementation((_event: string, cb: (input: string) => Promise<void> | void) => {
+      lineCallbacks.push(cb)
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'deepseek-coder', apiKey: 'sk-test' },
+      costGuard: { monthlyBudget: 10, warnAtPercent: 80 },
+    } as any)
+
+    await lineCallbacks[0]('hello')
+    await lineCallbacks[0]('/cost')
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Cost usage'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('deepseek-coder'))
+
+    logSpy.mockRestore()
+  })
+
   it('keeps cumulative token usage after /clear', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     providerMocks.chat
@@ -674,6 +716,75 @@ describe('startChat', () => {
     expect(logSpy).toHaveBeenCalledWith(
       expect.stringContaining('Reached max execution steps'),
     )
+
+    logSpy.mockRestore()
+  })
+
+  it('creates a plan in plan mode and waits for approval', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({
+      content: JSON.stringify({
+        summary: '为任务生成 2 个可执行步骤',
+        steps: [
+          { title: '分析代码结构', prompt: '读取并分析项目结构' },
+          { title: '实现认证模块', prompt: '创建并修改认证相关文件' },
+        ],
+      }),
+      model: 'test',
+    })
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      mode: 'plan',
+    } as any)
+
+    await callbacks.line('给项目添加 JWT 认证')
+
+    expect(providerMocks.chat).toHaveBeenCalledTimes(1)
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[PLAN]'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('输入 Y 确认执行'))
+
+    logSpy.mockRestore()
+  })
+
+  it('executes an approved plan after the user confirms', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          summary: '为任务生成 2 个可执行步骤',
+          steps: [
+            { title: '分析代码结构', prompt: '读取并分析项目结构' },
+            { title: '实现认证模块', prompt: '创建并修改认证相关文件' },
+          ],
+        }),
+        model: 'test',
+      })
+      .mockResolvedValueOnce({ content: '已分析项目结构', model: 'test' })
+      .mockResolvedValueOnce({ content: '已完成认证模块实现', model: 'test' })
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      mode: 'plan',
+    } as any)
+
+    await callbacks.line('给项目添加 JWT 认证')
+    await callbacks.line('y')
+
+    expect(providerMocks.chat).toHaveBeenCalledTimes(3)
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Plan completed'))
 
     logSpy.mockRestore()
   })

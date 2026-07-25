@@ -130,6 +130,26 @@ describe('createProviderFromConfig', () => {
     expect(provider.name).toBe('openai-compatible')
   })
 
+  it('creates a routed provider when multiple models are configured', async () => {
+    const { createProviderFromConfig } = await import('../../../src/llm/registry.js')
+    const provider = createProviderFromConfig({
+      model: {
+        provider: 'deepseek',
+        model: 'fallback',
+        apiKey: 'sk-fallback',
+      },
+      models: {
+        code: {
+          provider: 'deepseek',
+          model: 'deepseek-coder',
+          apiKey: 'sk-code',
+        },
+      },
+    } as any)
+
+    expect(provider.name).toBe('model-router')
+  })
+
   it('throws if apiKey is missing', async () => {
     const { createProviderFromConfig } = await import('../../../src/llm/registry.js')
     expect(() => createProviderFromConfig({

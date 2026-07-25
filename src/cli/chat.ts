@@ -1,8 +1,10 @@
 import * as readline from "node:readline";
 import chalk from "chalk";
 import ora from "ora";
+import { CostTracker, formatCostSnapshot } from "../llm/cost-tracker.js";
 import type { LLMProvider } from "../llm/provider.js";
 import { createProviderFromConfig } from "../llm/registry.js";
+import { executeApprovedPlan, formatPlanState } from "../modes/plan.js";
 import { ModeRouter } from "../modes/router.js";
 import { createTaskTiming, formatTaskTiming } from "../session/execution.js";
 import { UsageTracker, formatUsageSnapshot } from "../session/usage.js";
@@ -10,6 +12,7 @@ import { createDefaultToolRegistry } from "../tools/built-in/index.js";
 import { MCPServerManager, type MCPSummary } from "../tools/mcp/manager.js";
 import type { Config } from "../types/config.js";
 import type { ChatMode } from "../types/mode.js";
+import type { PlanState } from "../types/plan.js";
 import type { LLMMessage, LLMToolCall, LLMUsage } from "../types/provider.js";
 import type { ToolResult } from "../types/tool.js";
 import { maskApiKey } from "../utils/api-key.js";
@@ -137,6 +140,12 @@ const COMMANDS: SlashCommand[] = [
     desc: "Show token usage",
     aliases: ["tokens"],
     keywords: ["usage", "token", "tokens"],
+  },
+  {
+    name: "cost",
+    desc: "查看费用统计",
+    aliases: ["bill"],
+    keywords: ["cost", "费用", "账单", "price"],
   },
   {
     name: "exit",
@@ -327,6 +336,7 @@ async function handleSlashCommand(
     mode: ChatMode;
     config: Config;
     usageTracker: UsageTracker;
+    costTracker: CostTracker;
     setMode: (m: ChatMode) => void;
     onExit?: (code: number) => Promise<void> | void;
   },
@@ -373,6 +383,10 @@ ${chalk.bold("可用命令:")}
           formatUsageSnapshot(ctx.usageTracker.snapshot(), ctx.config.model?.model ?? "unknown"),
         ),
       );
+      break;
+
+    case "cost":
+      console.log(chalk.yellow(formatCostSnapshot(ctx.costTracker.snapshot())));
       break;
 
     case "exit":
@@ -446,6 +460,22 @@ function userConfirm(toolCall: LLMToolCall, rl: readline.Interface): Promise<boo
 const CHAT_PROMPT = chalk.dim("│ ") + chalk.cyan("❯ ");
 const SUGGESTION_LIMIT = 6;
 
+function isPlanApprovalInput(input: string): boolean {
+  const normalized = input.trim().toLowerCase();
+  return ["y", "yes", "确认", "执行", "继续"].includes(normalized);
+}
+
+function isPlanRejectInput(input: string): boolean {
+  const normalized = input.trim().toLowerCase();
+  return ["n", "no", "取消", "停止"].includes(normalized);
+}
+
+function printPlanState(plan: PlanState): void {
+  const header = chalk.dim("─── PLAN ──────────────────────────────────────");
+  const footer = chalk.dim("────────────────────────────────────────────────");
+  console.log(`\n${header}\n${formatPlanState(plan)}\n${footer}\n`);
+}
+
 export async function runPrompt(config: Config, prompt: string): Promise<void> {
   if (!config.model?.apiKey) {
     console.error(chalk.red("API Key is not configured. Run code-agent init first."));
@@ -463,17 +493,19 @@ export async function runPrompt(config: Config, prompt: string): Promise<void> {
   const messages: LLMMessage[] = [];
   const timing = createTaskTiming();
   const usageTracker = new UsageTracker();
+  const costTracker = new CostTracker(config.costGuard);
   const modeRouter = new ModeRouter();
   const handler = modeRouter.getHandler(config.mode);
 
   try {
     await mcpManager.startAll();
-    await handler.run(prompt, {
+    const modeResult = await handler.run(prompt, {
       provider,
       toolRegistry,
       messages,
       config,
       usageTracker,
+      costTracker,
       timing,
       skipConfirm: Boolean(config.yolo),
       confirmToolCall: async () => false,
@@ -487,8 +519,44 @@ export async function runPrompt(config: Config, prompt: string): Promise<void> {
         onWarning: (message) => {
           console.log(chalk.yellow(`\n${message}`));
         },
+        onPlanState: printPlanState,
       },
     });
+
+    if (modeResult.planState) {
+      if (config.yolo) {
+        await executeApprovedPlan(
+          modeResult.planState,
+          {
+            provider,
+            toolRegistry,
+            messages,
+            config,
+            usageTracker,
+            timing,
+            skipConfirm: true,
+            confirmToolCall: async () => true,
+            output: {
+              onAssistantMessage: (content) => {
+                console.log(content);
+              },
+              onTokenUsage: printTokenUsage,
+              onToolStart: printToolStart,
+              onToolResult: printToolResult,
+              onWarning: (message) => {
+                console.log(chalk.yellow(`\n${message}`));
+              },
+              onPlanState: printPlanState,
+            },
+          },
+          handler.maxIterations,
+        );
+      } else {
+        console.log(
+          chalk.yellow("Plan generated. Re-run with --yolo or use interactive chat to execute it."),
+        );
+      }
+    }
   } catch (error) {
     displayError(error);
   } finally {
@@ -514,8 +582,10 @@ export async function startChat(config: Config): Promise<void> {
   });
   const messages: LLMMessage[] = [];
   const usageTracker = new UsageTracker();
+  const costTracker = new CostTracker(config.costGuard);
   const modeRouter = new ModeRouter();
   let mode: ChatMode = (config.mode as ChatMode) ?? "normal";
+  let pendingPlan: PlanState | undefined;
   type KeypressListener = (str: string, key: { name?: string; ctrl?: boolean }) => void;
   const cleanupHooks: {
     clearSuggestionBlock?: () => void;
@@ -799,8 +869,12 @@ export async function startChat(config: Config): Promise<void> {
           mode,
           config,
           usageTracker,
+          costTracker,
           setMode: (m) => {
             mode = m;
+            if (m !== "plan") {
+              pendingPlan = undefined;
+            }
             setChatPrompt();
           },
           onExit: (code) => shutdown({ exit: true, exitCode: code }),
@@ -817,48 +891,73 @@ export async function startChat(config: Config): Promise<void> {
       const timing = createTaskTiming();
       const spinner = ora({ text: "AI thinking...", color: "cyan" }).start();
       const handler = modeRouter.getHandler(mode);
+      const runContext = {
+        provider,
+        toolRegistry,
+        messages,
+        config,
+        usageTracker,
+        costTracker,
+        timing,
+        skipConfirm: Boolean(config.yolo),
+        confirmToolCall: (toolCall: LLMToolCall) => userConfirm(toolCall, rl),
+        output: {
+          onIteration: (iteration: number) => {
+            if (iteration > 1) {
+              spinner.text = `AI executing... (step ${iteration - 1})`;
+              spinner.start();
+            }
+          },
+          onAssistantMessage: (content: string) => {
+            spinner.stop();
+            const header = chalk.dim("─── AI ────────────────────────────────────────");
+            const footer = chalk.dim("────────────────────────────────────────────────");
+            console.log(`\n${header}\n${content}\n${footer}\n`);
+          },
+          onTokenUsage: (usage: LLMUsage) => {
+            spinner.stop();
+            printTokenUsage(usage);
+          },
+          onToolStart: (toolCall: LLMToolCall) => {
+            spinner.stop();
+            printToolStart(toolCall);
+          },
+          onToolResult: (toolCall: LLMToolCall, result: ToolResult, elapsedMs: number) => {
+            spinner.stop();
+            printToolResult(toolCall, result, elapsedMs);
+          },
+          onWarning: (message: string) => {
+            spinner.stop();
+            console.log(chalk.yellow(message));
+          },
+          onPlanState: (plan: PlanState) => {
+            spinner.stop();
+            printPlanState(plan);
+          },
+        },
+      };
 
       try {
-        await handler.run(trimmed, {
-          provider,
-          toolRegistry,
-          messages,
-          config,
-          usageTracker,
-          timing,
-          skipConfirm: Boolean(config.yolo),
-          confirmToolCall: (toolCall) => userConfirm(toolCall, rl),
-          output: {
-            onIteration: (iteration) => {
-              if (iteration > 1) {
-                spinner.text = `AI executing... (step ${iteration - 1})`;
-                spinner.start();
-              }
-            },
-            onAssistantMessage: (content) => {
-              spinner.stop();
-              const header = chalk.dim("─── AI ────────────────────────────────────────");
-              const footer = chalk.dim("────────────────────────────────────────────────");
-              console.log(`\n${header}\n${content}\n${footer}\n`);
-            },
-            onTokenUsage: (usage) => {
-              spinner.stop();
-              printTokenUsage(usage);
-            },
-            onToolStart: (toolCall) => {
-              spinner.stop();
-              printToolStart(toolCall);
-            },
-            onToolResult: (toolCall, result, elapsedMs) => {
-              spinner.stop();
-              printToolResult(toolCall, result, elapsedMs);
-            },
-            onWarning: (message) => {
-              spinner.stop();
-              console.log(chalk.yellow(message));
-            },
-          },
-        });
+        if (mode === "plan" && pendingPlan) {
+          if (isPlanApprovalInput(trimmed)) {
+            const approvedPlan = pendingPlan;
+            pendingPlan = undefined;
+            await executeApprovedPlan(approvedPlan, runContext, handler.maxIterations);
+          } else if (isPlanRejectInput(trimmed)) {
+            pendingPlan = undefined;
+            spinner.stop();
+            console.log(chalk.yellow("已取消当前计划"));
+          } else {
+            const result = await handler.run(
+              `${pendingPlan.originalTask}\n\n用户反馈：${trimmed}`,
+              runContext,
+            );
+            pendingPlan = result.planState;
+          }
+        } else {
+          const result = await handler.run(trimmed, runContext);
+          pendingPlan = result.planState;
+        }
       } catch (error) {
         spinner.stop();
         displayError(error);

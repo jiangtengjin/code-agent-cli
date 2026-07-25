@@ -8,15 +8,23 @@
  */
 
 import type { Config, LLMConfig, MCPServerConfig } from "../types/config.js";
+import type { ChatMode } from "../types/mode.js";
 import { getGlobalConfigPath, getProjectConfigPath, loadConfigFile } from "./manager.js";
 
 /** CLI 命令行选项 */
 export interface CLIOptions {
   prompt?: string;
-  mode?: string;
+  mode?: ChatMode;
   model?: string;
   yolo?: boolean;
   debug?: boolean;
+}
+
+const CHAT_MODES: ChatMode[] = ["normal", "auto", "plan", "edit"];
+
+function parseChatMode(value: string | undefined): ChatMode | undefined {
+  if (!value) return undefined;
+  return CHAT_MODES.includes(value as ChatMode) ? (value as ChatMode) : undefined;
 }
 
 /** 从环境变量 CODE_AGENT_* 加载配置 */
@@ -38,7 +46,7 @@ function loadEnvConfig(): Partial<Config> {
     if (baseUrl) config.model.baseUrl = baseUrl;
   }
 
-  if (mode) config.mode = mode;
+  config.mode = parseChatMode(mode);
   if (yolo === "true") config.yolo = true;
 
   return config;
@@ -118,7 +126,7 @@ export class ConfigResolver {
   /** 将 CLI 选项转换为配置对象 */
   private cliOptionsToConfig(options: CLIOptions): Partial<Config> {
     const config: Partial<Config> = {};
-    if (options.mode) config.mode = options.mode;
+    config.mode = options.mode;
     if (options.model) {
       config.model = { model: options.model } as LLMConfig;
     }

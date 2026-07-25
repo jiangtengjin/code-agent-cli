@@ -15,17 +15,11 @@ describe("ModeRouter", () => {
     });
   });
 
-  it("routes plan and edit through normal behavior in Phase 1d", () => {
+  it("returns dedicated handlers for plan and edit in Phase 2", () => {
     const router = new ModeRouter();
 
-    expect(router.getHandler("plan")).toMatchObject({
-      mode: "normal",
-      maxIterations: 10,
-    });
-    expect(router.getHandler("edit")).toMatchObject({
-      mode: "normal",
-      maxIterations: 10,
-    });
+    expect(router.getHandler("plan").mode).toBe("plan");
+    expect(router.getHandler("edit").mode).toBe("edit");
   });
 
   it("falls back to normal for invalid mode strings", () => {

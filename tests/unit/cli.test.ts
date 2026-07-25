@@ -52,6 +52,14 @@ describe("CLI command framework", () => {
     expect(configCmd?.description()).toBe("管理配置");
   });
 
+  it("includes the mcp subcommand", () => {
+    const program = createProgram();
+    const mcpCmd = program.commands.find((cmd) => cmd.name() === "mcp");
+
+    expect(mcpCmd).toBeDefined();
+    expect(mcpCmd?.description()).toBe("管理 MCP 服务");
+  });
+
   it("config subcommand includes set/get/list/edit", () => {
     const program = createProgram();
     const configCmd = program.commands.find((cmd) => cmd.name() === "config")!;
@@ -61,6 +69,16 @@ describe("CLI command framework", () => {
     expect(subCmdNames).toContain("get");
     expect(subCmdNames).toContain("list");
     expect(subCmdNames).toContain("edit");
+  });
+
+  it("mcp subcommand includes add/remove/list", () => {
+    const program = createProgram();
+    const mcpCmd = program.commands.find((cmd) => cmd.name() === "mcp")!;
+    const subCmdNames = mcpCmd.commands.map((c) => c.name());
+
+    expect(subCmdNames).toContain("add");
+    expect(subCmdNames).toContain("remove");
+    expect(subCmdNames).toContain("list");
   });
 
   it("includes all global options", () => {

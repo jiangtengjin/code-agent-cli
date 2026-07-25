@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AutoModeHandler } from "../../../src/modes/auto.js";
+import { EditModeHandler } from "../../../src/modes/edit.js";
 import { NormalModeHandler } from "../../../src/modes/normal.js";
 import { createTaskTiming } from "../../../src/session/execution.js";
 import { UsageTracker } from "../../../src/session/usage.js";
@@ -271,5 +272,46 @@ describe("mode execution loop", () => {
     expect(output.onWarning).toHaveBeenCalledWith(
       "Reached max execution steps; the task may be incomplete.",
     );
+  });
+
+  it("limits edit mode to file and search tools", async () => {
+    const safeTool: ToolDefinition = {
+      name: "edit_file",
+      description: "Edit a file",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn(async () => ({ success: true, data: "edited" })),
+    };
+    const unsafeTool: ToolDefinition = {
+      name: "run_terminal",
+      description: "Run a command",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn(async () => ({ success: true, data: "ran" })),
+    };
+    const { provider, context, messages, toolRegistry } = createContext([
+      {
+        content: "",
+        model: "test",
+        toolCalls: [{ id: "call-1", name: "run_terminal", args: { command: "npm test" } }],
+      },
+      { content: "done", model: "test" },
+    ]);
+    toolRegistry.register(safeTool);
+    toolRegistry.register(unsafeTool);
+
+    await new EditModeHandler().run("change code only", context);
+
+    expect(provider.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tools: [expect.objectContaining({ name: "edit_file" })],
+      }),
+    );
+    expect(provider.chat.mock.calls[0][0].tools).not.toContain(
+      expect.objectContaining({ name: "run_terminal" }),
+    );
+    expect(unsafeTool.execute).not.toHaveBeenCalled();
+    expect(JSON.parse(String(messages[2].content))).toEqual({
+      success: false,
+      error: "Unknown tool: run_terminal",
+    });
   });
 });

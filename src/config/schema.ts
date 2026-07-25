@@ -7,6 +7,8 @@
 
 import { z } from "zod";
 
+const ChatModeSchema = z.enum(["normal", "auto", "plan", "edit"]);
+
 export const LLMConfigSchema = z.object({
   provider: z.string().min(1, "Provider 不能为空"),
   model: z.string().min(1, "Model 不能为空"),
@@ -24,12 +26,31 @@ export const MCPServerConfigSchema = z.object({
   url: z.string().url("必须是有效的 URL").optional(),
 });
 
+export const RAGConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  maxResults: z.number().int().positive().optional(),
+  chunkSize: z.number().int().positive().optional(),
+});
+
+export const TerminalConfigSchema = z.object({
+  shell: z.string().min(1, "Shell 不能为空").optional(),
+  timeout: z.number().int().positive("超时时间必须大于 0").optional(),
+});
+
+export const CostGuardConfigSchema = z.object({
+  monthlyBudget: z.number().positive("月预算必须大于 0").optional(),
+  warnAtPercent: z.number().min(1, "告警阈值至少为 1").max(100, "告警阈值不能超过 100").optional(),
+});
+
 export const ConfigSchema = z.object({
   $schema: z.string().optional(),
   model: LLMConfigSchema.optional(),
   models: z.record(LLMConfigSchema).optional(),
-  mode: z.string().optional(),
+  mode: ChatModeSchema.optional(),
   yolo: z.boolean().optional(),
   mcpServers: z.record(MCPServerConfigSchema).optional(),
+  rag: RAGConfigSchema.optional(),
+  terminal: TerminalConfigSchema.optional(),
+  costGuard: CostGuardConfigSchema.optional(),
   systemPrompt: z.string().optional(),
 });

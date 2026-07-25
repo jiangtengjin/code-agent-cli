@@ -148,8 +148,12 @@ export async function runExecutionLoop(
       });
 
     context.usageTracker.record(response.usage);
+    const costWarning = context.costTracker?.record(response.model, response.usage);
     if (response.usage) {
       context.output?.onTokenUsage?.(response.usage);
+    }
+    if (costWarning) {
+      context.output?.onWarning?.(costWarning);
     }
 
     if (response.toolCalls && response.toolCalls.length > 0) {

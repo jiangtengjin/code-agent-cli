@@ -18,6 +18,7 @@ import type { CLIOptions } from "../config/resolver.js";
 import { setupWizard } from "../config/wizard.js";
 import { debug } from "../utils/logger.js";
 import { configEdit, configGet, configList, configSet } from "./config.js";
+import { mcpAdd, mcpList, mcpRemove } from "./mcp.js";
 
 export function createProgram(): Command {
   const program = new Command();
@@ -71,6 +72,23 @@ export function createProgram(): Command {
   configCmd.command("edit").action(configEdit);
 
   program.addCommand(configCmd);
+
+  const mcpCmd = new Command("mcp").description("管理 MCP 服务");
+
+  mcpCmd
+    .command("add")
+    .argument("<name>", "服务名称")
+    .argument("<command>", "启动命令")
+    .argument("[args...]", "命令参数")
+    .option("--transport <transport>", "传输协议", "stdio")
+    .option("--url <url>", "SSE/HTTP 服务地址")
+    .option("--env <entry...>", "环境变量，格式 KEY=VALUE")
+    .action(mcpAdd);
+
+  mcpCmd.command("remove").argument("<name>", "服务名称").action(mcpRemove);
+  mcpCmd.command("list").action(mcpList);
+
+  program.addCommand(mcpCmd);
 
   return program;
 }

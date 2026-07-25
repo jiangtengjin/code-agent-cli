@@ -22,3 +22,4 @@ export type {
 } from "./provider.js";
 export type { ToolDefinition, ToolResult, ToolCall } from "./tool.js";
 export type { MCPToolDefinition, MCPCallToolResult } from "./mcp.js";
+export type { PlanState, PlanStep, PlanStepStatus } from "./plan.js";
