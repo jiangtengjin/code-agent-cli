@@ -500,7 +500,7 @@ describe('startChat', () => {
     logSpy.mockRestore()
   })
 
-  it('shows thinking message when user sends input', async () => {
+  it('does not echo the submitted user input a second time', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const { startChat } = await import('../../src/cli/chat.js')
 
@@ -515,8 +515,7 @@ describe('startChat', () => {
 
     await lineCallbacks[0]('hello')
 
-    // User message should render with a left bar
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('hello'))
+    expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('hello'))
 
     logSpy.mockRestore()
   })
@@ -765,8 +764,9 @@ describe('startChat', () => {
     await callbacks.line('给项目添加 JWT 认证')
 
     expect(providerMocks.chat).toHaveBeenCalledTimes(1)
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[PLAN]'))
+    expect(logSpy.mock.calls.filter(([message]) => String(message).includes('[PLAN]'))).toHaveLength(1)
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Enter Y to execute'))
+    expect(mockRl.prompt.mock.calls.length).toBeGreaterThan(1)
 
     logSpy.mockRestore()
   })
@@ -802,6 +802,7 @@ describe('startChat', () => {
     await callbacks.line('y')
 
     expect(providerMocks.chat).toHaveBeenCalledTimes(3)
+    expect(logSpy.mock.calls.filter(([message]) => String(message).includes('─── PLAN'))).toHaveLength(0)
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Plan completed'))
 
     logSpy.mockRestore()

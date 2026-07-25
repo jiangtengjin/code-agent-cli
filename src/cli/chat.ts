@@ -478,6 +478,23 @@ function printPlanState(plan: PlanState): void {
   console.log(`\n${header}\n${formatPlanState(plan)}\n${footer}\n`);
 }
 
+function formatPlanProgress(plan: PlanState): string {
+  const total = plan.steps.length;
+  const done = plan.steps.filter((step) => step.status === "done").length;
+  const runningIndex = plan.steps.findIndex((step) => step.status === "running");
+
+  if (runningIndex >= 0) {
+    return `Plan step ${runningIndex + 1}/${total}: ${plan.steps[runningIndex].title}`;
+  }
+
+  const failedIndex = plan.steps.findIndex((step) => step.status === "failed");
+  if (failedIndex >= 0) {
+    return `Plan failed at ${failedIndex + 1}/${total}: ${plan.steps[failedIndex].title}`;
+  }
+
+  return `Plan progress: ${done}/${total} steps completed`;
+}
+
 function createProviderOrExit(config: Config): LLMProvider | null {
   try {
     return createProviderFromConfig(config);
@@ -906,8 +923,6 @@ export async function startChat(config: Config): Promise<void> {
         return;
       }
 
-      drawUserMessage(trimmed);
-
       const timing = createTaskTiming();
       const spinner = ora({ text: "AI thinking...", color: "cyan" }).start();
       const handler = modeRouter.getHandler(mode);
@@ -951,8 +966,8 @@ export async function startChat(config: Config): Promise<void> {
             console.log(chalk.yellow(message));
           },
           onPlanState: (plan: PlanState) => {
-            spinner.stop();
-            printPlanState(plan);
+            spinner.text = formatPlanProgress(plan);
+            spinner.start();
           },
         },
       };

@@ -373,7 +373,6 @@ export class PlanModeHandler implements ModeHandler {
     const formattedPlan = `${formatPlanState(planState)}\n\nEnter Y to execute, N to cancel, or provide feedback to revise the plan.`;
     context.messages.push({ role: "assistant", content: formattedPlan });
     context.output?.onAssistantMessage?.(formattedPlan);
-    context.output?.onPlanState?.(planState);
 
     return {
       iterations: 1,

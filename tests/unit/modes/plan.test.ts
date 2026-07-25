@@ -123,6 +123,7 @@ describe("PlanModeHandler", () => {
       ],
     });
     expect(output.onAssistantMessage).toHaveBeenCalledWith(expect.stringContaining("[PLAN]"));
+    expect(output.onPlanState).not.toHaveBeenCalled();
   });
 
   it("falls back to numbered natural-language steps when the model does not return JSON", async () => {
@@ -163,7 +164,7 @@ describe("PlanModeHandler", () => {
         },
       ],
     });
-    expect(output.onPlanState).toHaveBeenCalled();
+    expect(output.onPlanState).not.toHaveBeenCalled();
   });
 
   it("executes approved plan steps sequentially and marks them as done", async () => {
