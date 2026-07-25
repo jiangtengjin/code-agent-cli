@@ -113,6 +113,30 @@ describe('OpenAICompatibleProvider', () => {
       messages: [{ role: 'user', content: 'Hi' }],
     })).rejects.toThrow()
   })
+
+  it('forwards abort signals to fetch', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        choices: [{ message: { content: 'Hello!' } }],
+        model: 'deepseek-coder',
+      }),
+    })
+
+    const provider = new OpenAICompatibleProvider({
+      model: 'deepseek-coder',
+      baseUrl: 'https://api.deepseek.com/v1',
+      apiKey: 'sk-test',
+    })
+    const abortController = new AbortController()
+
+    await provider.chat({
+      messages: [{ role: 'user', content: 'Hi' }],
+      signal: abortController.signal,
+    } as any)
+
+    expect(mockFetch.mock.calls[0][1]?.signal).toBe(abortController.signal)
+  })
 })
 
 describe('createProviderFromConfig', () => {
@@ -128,6 +152,41 @@ describe('createProviderFromConfig', () => {
     } as any)
 
     expect(provider.name).toBe('openai-compatible')
+  })
+
+  it('creates a routed provider when multiple models are configured', async () => {
+    const { createProviderFromConfig } = await import('../../../src/llm/registry.js')
+    const provider = createProviderFromConfig({
+      model: {
+        provider: 'deepseek',
+        model: 'fallback',
+        apiKey: 'sk-fallback',
+      },
+      models: {
+        code: {
+          provider: 'deepseek',
+          model: 'deepseek-coder',
+          apiKey: 'sk-code',
+        },
+      },
+    } as any)
+
+    expect(provider.name).toBe('model-router')
+  })
+
+  it('creates a routed provider when only routed models are configured', async () => {
+    const { createProviderFromConfig } = await import('../../../src/llm/registry.js')
+    const provider = createProviderFromConfig({
+      models: {
+        default: {
+          provider: 'deepseek',
+          model: 'deepseek-chat',
+          apiKey: 'sk-default',
+        },
+      },
+    } as any)
+
+    expect(provider.name).toBe('model-router')
   })
 
   it('throws if apiKey is missing', async () => {

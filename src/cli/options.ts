@@ -6,11 +6,19 @@
  */
 
 import type { CLIOptions } from "../config/resolver.js";
+import type { ChatMode } from "../types/mode.js";
+
+const CHAT_MODES: ChatMode[] = ["normal", "auto", "plan", "edit"];
+
+function parseChatMode(value: unknown): ChatMode | undefined {
+  if (typeof value !== "string") return undefined;
+  return CHAT_MODES.includes(value as ChatMode) ? (value as ChatMode) : undefined;
+}
 
 export function parseCLIOptions(raw: Record<string, unknown>): CLIOptions {
   return {
     prompt: raw.prompt as string | undefined,
-    mode: raw.mode as string | undefined,
+    mode: parseChatMode(raw.mode),
     model: raw.model as string | undefined,
     yolo: raw.yolo as boolean | undefined,
     debug: raw.debug as boolean | undefined,

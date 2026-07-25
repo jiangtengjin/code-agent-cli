@@ -18,9 +18,14 @@ import type { Config } from "../types/config.js";
 const CONFIG_DIR = join(homedir(), ".config", "code-agent");
 const GLOBAL_CONFIG_PATH = join(CONFIG_DIR, "config.jsonc");
 const PROJECT_CONFIG_FILENAME = ".code-agent.jsonc";
+const SESSIONS_DIR = join(CONFIG_DIR, "sessions");
 
 export function getGlobalConfigPath(): string {
   return GLOBAL_CONFIG_PATH;
+}
+
+export function getDefaultSessionsStorePath(): string {
+  return SESSIONS_DIR;
 }
 
 export function getProjectConfigPath(cwd: string): string | null {

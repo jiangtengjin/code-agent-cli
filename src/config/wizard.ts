@@ -49,12 +49,12 @@ async function promptSelect(options: {
 /** 根据厂商返回推荐的模型名称 */
 function getDefaultModel(provider: string): string {
   const models: Record<string, string> = {
-    deepseek: "deepseek-coder",
+    deepseek: "deepseek-v4-flash",
     qwen: "qwen-plus",
     glm: "glm-4",
     ollama: "qwen2.5-coder:7b",
   };
-  return models[provider] || "deepseek-coder";
+  return models[provider] || "deepseek-v4-flash";
 }
 
 /** 根据厂商返回默认 API Base URL */

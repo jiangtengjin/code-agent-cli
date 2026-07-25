@@ -7,16 +7,30 @@
  * 优先级高的配置项会覆盖优先级低的同名配置项。
  */
 
-import type { Config, LLMConfig, MCPServerConfig } from "../types/config.js";
-import { getGlobalConfigPath, getProjectConfigPath, loadConfigFile } from "./manager.js";
+import type { Config, LLMConfig, MCPServerConfig, SessionsConfig } from "../types/config.js";
+import type { ChatMode } from "../types/mode.js";
+import {
+  getDefaultSessionsStorePath,
+  getGlobalConfigPath,
+  getProjectConfigPath,
+  loadConfigFile,
+} from "./manager.js";
 
 /** CLI 命令行选项 */
 export interface CLIOptions {
   prompt?: string;
-  mode?: string;
+  continue?: boolean;
+  mode?: ChatMode;
   model?: string;
   yolo?: boolean;
   debug?: boolean;
+}
+
+const CHAT_MODES: ChatMode[] = ["normal", "auto", "plan", "edit"];
+
+function parseChatMode(value: string | undefined): ChatMode | undefined {
+  if (!value) return undefined;
+  return CHAT_MODES.includes(value as ChatMode) ? (value as ChatMode) : undefined;
 }
 
 /** 从环境变量 CODE_AGENT_* 加载配置 */
@@ -38,7 +52,7 @@ function loadEnvConfig(): Partial<Config> {
     if (baseUrl) config.model.baseUrl = baseUrl;
   }
 
-  if (mode) config.mode = mode;
+  config.mode = parseChatMode(mode);
   if (yolo === "true") config.yolo = true;
 
   return config;
@@ -68,12 +82,30 @@ function deepMerge(base: Config, ...sources: Partial<Config>[]): Config {
           ...result.mcpServers,
           ...(value as Record<string, MCPServerConfig>),
         };
+      } else if (key === "sessions" && typeof value === "object" && result.sessions) {
+        result.sessions = {
+          ...result.sessions,
+          ...(value as SessionsConfig),
+        };
       } else {
         (result as Record<string, unknown>)[key] = value;
       }
     }
   }
   return result;
+}
+
+function applySessionDefaults(config: Config): Config {
+  return {
+    ...config,
+    sessions: {
+      enabled: true,
+      storePath: getDefaultSessionsStorePath(),
+      defaultScope: "workspace",
+      includePromptSessions: false,
+      ...(config.sessions ?? {}),
+    },
+  };
 }
 
 export class ConfigResolver {
@@ -112,13 +144,13 @@ export class ConfigResolver {
       this.cliOptionsToConfig(cliOptions),
     );
 
-    return merged;
+    return applySessionDefaults(merged);
   }
 
   /** 将 CLI 选项转换为配置对象 */
   private cliOptionsToConfig(options: CLIOptions): Partial<Config> {
     const config: Partial<Config> = {};
-    if (options.mode) config.mode = options.mode;
+    config.mode = options.mode;
     if (options.model) {
       config.model = { model: options.model } as LLMConfig;
     }

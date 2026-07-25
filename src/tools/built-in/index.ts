@@ -8,6 +8,7 @@ import {
   writeFileTool,
 } from "./file.js";
 import { globSearchTool, grepSearchTool } from "./search.js";
+import { runTerminalTool } from "./terminal.js";
 
 export function createDefaultToolRegistry(): ToolRegistry {
   const registry = new ToolRegistry();
@@ -21,7 +22,7 @@ export function createDefaultToolRegistry(): ToolRegistry {
     listDirTool,
   ]);
 
-  registry.registerMany([globSearchTool, grepSearchTool]);
+  registry.registerMany([globSearchTool, grepSearchTool, runTerminalTool]);
 
   return registry;
 }

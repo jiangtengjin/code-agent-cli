@@ -13,12 +13,13 @@ describe("工具集成", () => {
     expect(registry.has("list_dir")).toBe(true);
     expect(registry.has("glob_search")).toBe(true);
     expect(registry.has("grep_search")).toBe(true);
+    expect(registry.has("run_terminal")).toBe(true);
   });
 
   it("应该返回所有工具定义", () => {
     const registry = createDefaultToolRegistry();
     const definitions = registry.getToolDefinitions();
 
-    expect(definitions.length).toBeGreaterThanOrEqual(8);
+    expect(definitions.length).toBeGreaterThanOrEqual(9);
   });
 });

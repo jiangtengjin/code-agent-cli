@@ -8,12 +8,17 @@ export interface UsageSnapshot {
 }
 
 export class UsageTracker {
-  private readonly totals: UsageSnapshot = {
-    promptTokens: 0,
-    completionTokens: 0,
-    totalTokens: 0,
-    calls: 0,
-  };
+  private readonly totals: UsageSnapshot;
+
+  constructor(initial?: Partial<UsageSnapshot>) {
+    this.totals = {
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      calls: 0,
+    };
+    this.restore(initial);
+  }
 
   record(usage: LLMUsage | undefined): void {
     if (!usage) return;
@@ -26,6 +31,17 @@ export class UsageTracker {
 
   snapshot(): UsageSnapshot {
     return { ...this.totals };
+  }
+
+  restore(snapshot?: Partial<UsageSnapshot>): void {
+    this.totals.promptTokens = snapshot?.promptTokens ?? 0;
+    this.totals.completionTokens = snapshot?.completionTokens ?? 0;
+    this.totals.totalTokens = snapshot?.totalTokens ?? 0;
+    this.totals.calls = snapshot?.calls ?? 0;
+  }
+
+  reset(): void {
+    this.restore();
   }
 }
 

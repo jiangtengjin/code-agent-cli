@@ -155,6 +155,20 @@ describe('slash command suggestions', () => {
       replacement: 'usage ',
     })
   })
+
+  it('suggests the cost command', async () => {
+    const { getSlashCommandSuggestions, getSlashCommandCompletion } = await import('../../src/cli/chat.js')
+
+    expect(getSlashCommandSuggestions('/co')[0]).toMatchObject({
+      kind: 'command',
+      value: 'cost',
+    })
+    expect(getSlashCommandCompletion('/co')).toEqual({
+      start: 1,
+      end: 3,
+      replacement: 'cost ',
+    })
+  })
 })
 
 describe('task timing', () => {
@@ -177,11 +191,20 @@ describe('task timing', () => {
 })
 
 describe('runPrompt', () => {
+  let tempDirs: string[] = []
+
   beforeEach(() => {
     vi.clearAllMocks()
     mcpManagerMocks.instances.length = 0
     mcpManagerMocks.setSummary({ servers: 0, tools: 0 })
     providerMocks.chat.mockResolvedValue({ content: 'single reply', model: 'test' })
+    tempDirs = []
+  })
+
+  afterEach(async () => {
+    for (const tempDir of tempDirs) {
+      await fs.rm(tempDir, { recursive: true, force: true })
+    }
   })
 
   it('sends the prompt as a user message and prints the response', async () => {
@@ -298,6 +321,24 @@ describe('startChat', () => {
     logSpy.mockRestore()
   })
 
+  it('starts chat when only routed models are configured', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    await startChat({
+      models: {
+        default: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      },
+    } as any)
+
+    expect(exitSpy).not.toHaveBeenCalled()
+    expect(mockRl.on).toHaveBeenCalled()
+
+    logSpy.mockRestore()
+    exitSpy.mockRestore()
+  })
+
   it('stops MCP servers when readline closes', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
@@ -408,6 +449,179 @@ describe('startChat', () => {
     logSpy.mockRestore()
   })
 
+  it('creates a persisted interactive session only after the first non-slash input', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-chat-'))
+    tempDirs.push(tempDir)
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      sessions: {
+        enabled: true,
+        storePath: tempDir,
+        defaultScope: 'workspace',
+        includePromptSessions: false,
+      },
+    } as any)
+
+    await callbacks.line('/help')
+    await expect(fs.access(path.join(tempDir, 'index.json'))).rejects.toThrow()
+
+    await callbacks.line('fix flaky test')
+
+    const index = JSON.parse(await fs.readFile(path.join(tempDir, 'index.json'), 'utf8'))
+    expect(index).toHaveLength(1)
+    expect(index[0]).toMatchObject({
+      kind: 'interactive',
+      status: 'idle',
+    })
+
+    logSpy.mockRestore()
+  })
+
+  it('restores the latest session state with --continue', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({ content: 'Step completed', model: 'test' })
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-continue-'))
+    tempDirs.push(tempDir)
+    const { SessionStore } = await import('../../src/session/store.js')
+    const { createSessionState } = await import('../../src/session/runtime.js')
+    const { resolveWorkspace } = await import('../../src/session/workspace.js')
+    const { startChat } = await import('../../src/cli/chat.js')
+    const workspace = await resolveWorkspace(process.cwd())
+    const store = new SessionStore(tempDir)
+    const state = createSessionState({
+      sessionId: 'session-continue',
+      kind: 'interactive',
+      mode: 'plan',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    state.messages = [
+      { role: 'user', content: 'add jwt auth' },
+      { role: 'assistant', content: '[PLAN] Plan summary' },
+    ]
+    state.pendingPlan = {
+      originalTask: 'add jwt auth',
+      summary: 'Plan summary',
+      steps: [{ title: 'Inspect auth flow', prompt: 'inspect auth flow', status: 'pending' }],
+    }
+    state.usage = {
+      promptTokens: 10,
+      completionTokens: 5,
+      totalTokens: 15,
+      calls: 1,
+    }
+    state.cost = {
+      currency: '¥',
+      totalCost: 0.004,
+      byModel: {},
+    }
+    state.status = 'awaiting_plan_approval'
+    state.title = 'add jwt auth'
+    state.updatedAt = '2026-07-25T12:05:00.000Z'
+    state.lastActiveAt = '2026-07-25T12:05:00.000Z'
+    await store.saveSession(state)
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat(
+      {
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        sessions: {
+          enabled: true,
+          storePath: tempDir,
+          defaultScope: 'workspace',
+          includePromptSessions: false,
+        },
+      } as any,
+      { continueLast: true } as any,
+    )
+
+    await callbacks.line('/usage')
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Total tokens: 15'))
+
+    await callbacks.line('y')
+
+    expect(providerMocks.chat).toHaveBeenCalledTimes(1)
+    expect(providerMocks.chat.mock.calls[0][0].messages).toEqual(
+      expect.arrayContaining([
+        { role: 'user', content: 'add jwt auth' },
+        { role: 'assistant', content: '[PLAN] Plan summary' },
+        { role: 'user', content: 'inspect auth flow' },
+      ]),
+    )
+
+    logSpy.mockRestore()
+  })
+
+  it('restores a matching session by resume query', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({ content: 'Resumed reply', model: 'test' })
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-resume-'))
+    tempDirs.push(tempDir)
+    const { SessionStore } = await import('../../src/session/store.js')
+    const { createSessionState } = await import('../../src/session/runtime.js')
+    const { resolveWorkspace } = await import('../../src/session/workspace.js')
+    const { startChat } = await import('../../src/cli/chat.js')
+    const workspace = await resolveWorkspace(process.cwd())
+    const store = new SessionStore(tempDir)
+    const state = createSessionState({
+      sessionId: 'fix-auth-timeout-123',
+      kind: 'interactive',
+      mode: 'normal',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    state.messages = [{ role: 'user', content: 'previous context' }]
+    state.title = 'fix-auth-timeout'
+    state.updatedAt = '2026-07-25T12:05:00.000Z'
+    state.lastActiveAt = '2026-07-25T12:05:00.000Z'
+    await store.saveSession(state)
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat(
+      {
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        sessions: {
+          enabled: true,
+          storePath: tempDir,
+          defaultScope: 'workspace',
+          includePromptSessions: false,
+        },
+      } as any,
+      { resumeQuery: 'fix-auth', resumeAll: false } as any,
+    )
+
+    await callbacks.line('next step')
+
+    expect(providerMocks.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          { role: 'user', content: 'previous context' },
+          { role: 'user', content: 'next step' },
+        ],
+      }),
+    )
+
+    logSpy.mockRestore()
+  })
+
   it('processes slash /clear command', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const { startChat } = await import('../../src/cli/chat.js')
@@ -424,6 +638,163 @@ describe('startChat', () => {
     await lineCallbacks[0]('/clear')
 
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('已清空'))
+
+    logSpy.mockRestore()
+  })
+
+  it('shows current session details with /session', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-info-'))
+    tempDirs.push(tempDir)
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      sessions: {
+        enabled: true,
+        storePath: tempDir,
+        defaultScope: 'workspace',
+        includePromptSessions: false,
+      },
+    } as any)
+
+    await callbacks.line('fix flaky test')
+    await callbacks.line('/session')
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Session ID:'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Status: idle'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Mode: normal'))
+
+    logSpy.mockRestore()
+  })
+
+  it('archives the current session and starts a fresh context on the next input', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat
+      .mockResolvedValueOnce({ content: 'First reply', model: 'test' })
+      .mockResolvedValueOnce({ content: 'Second reply', model: 'test' })
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-archive-'))
+    tempDirs.push(tempDir)
+    const { startChat } = await import('../../src/cli/chat.js')
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      sessions: {
+        enabled: true,
+        storePath: tempDir,
+        defaultScope: 'workspace',
+        includePromptSessions: false,
+      },
+    } as any)
+
+    await callbacks.line('first task')
+    await callbacks.line('/archive')
+    await callbacks.line('second task')
+
+    const index = JSON.parse(await fs.readFile(path.join(tempDir, 'index.json'), 'utf8'))
+    expect(index).toHaveLength(2)
+    expect(index.some((session: any) => session.status === 'archived')).toBe(true)
+    expect(providerMocks.chat.mock.calls[1][0].messages).toEqual([{ role: 'user', content: 'second task' }])
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('已归档当前会话'))
+
+    logSpy.mockRestore()
+  })
+
+  it('restores a saved session from /resume <query>', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({ content: 'Resumed reply', model: 'test' })
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-slash-resume-'))
+    tempDirs.push(tempDir)
+    const { SessionStore } = await import('../../src/session/store.js')
+    const { createSessionState } = await import('../../src/session/runtime.js')
+    const { resolveWorkspace } = await import('../../src/session/workspace.js')
+    const { startChat } = await import('../../src/cli/chat.js')
+    const workspace = await resolveWorkspace(process.cwd())
+    const store = new SessionStore(tempDir)
+    const state = createSessionState({
+      sessionId: 'slash-resume-123',
+      kind: 'interactive',
+      mode: 'normal',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    state.messages = [{ role: 'user', content: 'previous context' }]
+    state.title = 'fix-auth-timeout'
+    state.updatedAt = '2026-07-25T12:05:00.000Z'
+    state.lastActiveAt = '2026-07-25T12:05:00.000Z'
+    await store.saveSession(state)
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      sessions: {
+        enabled: true,
+        storePath: tempDir,
+        defaultScope: 'workspace',
+        includePromptSessions: false,
+      },
+    } as any)
+
+    await callbacks.line('/resume fix-auth')
+    await callbacks.line('next step')
+
+    expect(providerMocks.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          { role: 'user', content: 'previous context' },
+          { role: 'user', content: 'next step' },
+        ],
+      }),
+    )
+
+    logSpy.mockRestore()
+  })
+
+  it('forks the current session into a new branch', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({ content: 'First reply', model: 'test' })
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-fork-'))
+    tempDirs.push(tempDir)
+    const { startChat } = await import('../../src/cli/chat.js')
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      sessions: {
+        enabled: true,
+        storePath: tempDir,
+        defaultScope: 'workspace',
+        includePromptSessions: false,
+      },
+    } as any)
+
+    await callbacks.line('first task')
+    await callbacks.line('/fork branch-one')
+
+    const index = JSON.parse(await fs.readFile(path.join(tempDir, 'index.json'), 'utf8'))
+    expect(index).toHaveLength(2)
+    expect(index[0]).toMatchObject({
+      title: 'branch-one',
+      parentSessionId: index[1].id,
+    })
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('已创建会话分支'))
 
     logSpy.mockRestore()
   })
@@ -468,7 +839,7 @@ describe('startChat', () => {
     logSpy.mockRestore()
   })
 
-  it('shows thinking message when user sends input', async () => {
+  it('does not echo the submitted user input a second time', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const { startChat } = await import('../../src/cli/chat.js')
 
@@ -483,8 +854,7 @@ describe('startChat', () => {
 
     await lineCallbacks[0]('hello')
 
-    // User message should render with a left bar
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('hello'))
+    expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('hello'))
 
     logSpy.mockRestore()
   })
@@ -612,6 +982,34 @@ describe('startChat', () => {
     logSpy.mockRestore()
   })
 
+  it('prints cumulative cost usage with /cost', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({
+      content: 'reply with cost',
+      model: 'deepseek-v4-flash',
+      usage: { promptTokens: 1000, completionTokens: 500, totalTokens: 1500 },
+    })
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    const lineCallbacks: Array<(input: string) => Promise<void> | void> = []
+    mockRl.on.mockImplementation((_event: string, cb: (input: string) => Promise<void> | void) => {
+      lineCallbacks.push(cb)
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'deepseek-v4-flash', apiKey: 'sk-test' },
+      costGuard: { monthlyBudget: 10, warnAtPercent: 80 },
+    } as any)
+
+    await lineCallbacks[0]('hello')
+    await lineCallbacks[0]('/cost')
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Cost usage'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('deepseek-v4-flash'))
+
+    logSpy.mockRestore()
+  })
+
   it('keeps cumulative token usage after /clear', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     providerMocks.chat
@@ -673,6 +1071,336 @@ describe('startChat', () => {
     expect(providerMocks.chat).toHaveBeenCalledTimes(25)
     expect(logSpy).toHaveBeenCalledWith(
       expect.stringContaining('Reached max execution steps'),
+    )
+
+    logSpy.mockRestore()
+  })
+
+  it('creates a plan in plan mode and waits for approval', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({
+      content: JSON.stringify({
+        summary: '为任务生成 2 个可执行步骤',
+        steps: [
+          { title: '分析代码结构', prompt: '读取并分析项目结构' },
+          { title: '实现认证模块', prompt: '创建并修改认证相关文件' },
+        ],
+      }),
+      model: 'test',
+    })
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      mode: 'plan',
+    } as any)
+
+    await callbacks.line('给项目添加 JWT 认证')
+
+    expect(providerMocks.chat).toHaveBeenCalledTimes(1)
+    expect(logSpy.mock.calls.filter(([message]) => String(message).includes('[PLAN]'))).toHaveLength(1)
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Enter Y to execute'))
+    expect(mockRl.prompt.mock.calls.length).toBeGreaterThan(1)
+
+    logSpy.mockRestore()
+  })
+
+  it('executes an approved plan after the user confirms', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          summary: '为任务生成 2 个可执行步骤',
+          steps: [
+            { title: '分析代码结构', prompt: '读取并分析项目结构' },
+            { title: '实现认证模块', prompt: '创建并修改认证相关文件' },
+          ],
+        }),
+        model: 'test',
+      })
+      .mockResolvedValueOnce({ content: '已分析项目结构', model: 'test' })
+      .mockResolvedValueOnce({ content: '已完成认证模块实现', model: 'test' })
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      mode: 'plan',
+    } as any)
+
+    await callbacks.line('给项目添加 JWT 认证')
+    await callbacks.line('y')
+
+    expect(providerMocks.chat).toHaveBeenCalledTimes(3)
+    expect(logSpy.mock.calls.filter(([message]) => String(message).includes('─── PLAN'))).toHaveLength(0)
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Plan completed'))
+
+    logSpy.mockRestore()
+  })
+
+  it('runs prompts when only routed models are configured', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { runPrompt } = await import('../../src/cli/chat.js')
+
+    await runPrompt(
+      {
+        models: {
+          default: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        },
+      } as any,
+      'hello from routed prompt',
+    )
+
+    expect(exitSpy).not.toHaveBeenCalled()
+    expect(providerMocks.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [{ role: 'user', content: 'hello from routed prompt' }],
+      }),
+    )
+
+    logSpy.mockRestore()
+    exitSpy.mockRestore()
+  })
+
+  it('tracks cost for plan generation and approved steps in yolo prompt mode', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { CostTracker } = await import('../../src/llm/cost-tracker.js')
+    const recordSpy = vi.spyOn(CostTracker.prototype, 'record')
+
+    providerMocks.chat
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          summary: 'Plan summary',
+          steps: [{ title: 'Inspect auth flow', prompt: 'inspect the existing auth flow' }],
+        }),
+        model: 'deepseek-v4-flash',
+        usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+      })
+      .mockResolvedValueOnce({
+        content: 'Step completed',
+        model: 'deepseek-v4-pro',
+        usage: { promptTokens: 30, completionTokens: 10, totalTokens: 40 },
+      })
+
+    const { runPrompt } = await import('../../src/cli/chat.js')
+
+    await runPrompt(
+      {
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        mode: 'plan',
+        yolo: true,
+        costGuard: { monthlyBudget: 10, warnAtPercent: 80 },
+      } as any,
+      'add jwt auth',
+    )
+
+    expect(recordSpy).toHaveBeenCalledTimes(2)
+    expect(recordSpy).toHaveBeenNthCalledWith(1, 'deepseek-v4-flash', {
+      promptTokens: 10,
+      completionTokens: 20,
+      totalTokens: 30,
+    })
+    expect(recordSpy).toHaveBeenNthCalledWith(2, 'deepseek-v4-pro', {
+      promptTokens: 30,
+      completionTokens: 10,
+      totalTokens: 40,
+    })
+
+    logSpy.mockRestore()
+  })
+
+  it('clears pending plan state when /clear is issued', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          summary: 'Plan summary',
+          steps: [{ title: 'Inspect auth flow', prompt: 'inspect the existing auth flow' }],
+        }),
+        model: 'test',
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          summary: 'One-letter task',
+          steps: [{ title: 'Echo input', prompt: 'echo y' }],
+        }),
+        model: 'test',
+      })
+
+    const { startChat } = await import('../../src/cli/chat.js')
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      mode: 'plan',
+    } as any)
+
+    await callbacks.line('add jwt auth')
+    await callbacks.line('/clear')
+    await callbacks.line('y')
+
+    expect(providerMocks.chat).toHaveBeenCalledTimes(2)
+    expect(providerMocks.chat.mock.calls[1][0].messages).toEqual([{ role: 'user', content: 'y' }])
+    expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Plan completed'))
+
+    logSpy.mockRestore()
+  })
+
+  it('persists a prompt session when session storage is enabled', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-prompt-'))
+    tempDirs.push(tempDir)
+    const { runPrompt } = await import('../../src/cli/chat.js')
+
+    await runPrompt(
+      {
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        sessions: {
+          enabled: true,
+          storePath: tempDir,
+          defaultScope: 'workspace',
+          includePromptSessions: false,
+        },
+      } as any,
+      'hello from prompt',
+    )
+
+    const index = JSON.parse(await fs.readFile(path.join(tempDir, 'index.json'), 'utf8'))
+    expect(index).toHaveLength(1)
+    expect(index[0]).toMatchObject({
+      kind: 'prompt',
+      status: 'idle',
+    })
+
+    logSpy.mockRestore()
+  })
+
+  it('marks the active session interrupted when Ctrl+C aborts a running turn', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-interrupt-'))
+    tempDirs.push(tempDir)
+    const abortError = Object.assign(new Error('Request aborted'), { name: 'AbortError' })
+
+    providerMocks.chat.mockImplementationOnce(
+      ({ signal }: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(abortError), { once: true })
+        }),
+    )
+
+    const { startChat } = await import('../../src/cli/chat.js')
+    const { SessionStore } = await import('../../src/session/store.js')
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      sessions: {
+        enabled: true,
+        storePath: tempDir,
+        defaultScope: 'workspace',
+        includePromptSessions: false,
+      },
+    } as any)
+
+    const linePromise = callbacks.line('long running task')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(providerMocks.chat).toHaveBeenCalledTimes(1)
+
+    const keypressListener = (process.stdin.prependListener as any).mock.calls.find(
+      ([eventName]: [string]) => eventName === 'keypress',
+    )?.[1]
+    expect(keypressListener).toBeTypeOf('function')
+
+    keypressListener('', { ctrl: true, name: 'c' })
+    await linePromise
+
+    const index = JSON.parse(await fs.readFile(path.join(tempDir, 'index.json'), 'utf8'))
+    const restored = await new SessionStore(tempDir).loadSession(index[0].id)
+
+    expect(restored).toMatchObject({
+      status: 'interrupted',
+      messages: [{ role: 'user', content: 'long running task' }],
+    })
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('interrupted'))
+
+    logSpy.mockRestore()
+  })
+
+  it('restores interrupted sessions as idle without auto-running them', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-interrupted-restore-'))
+    tempDirs.push(tempDir)
+    const { SessionStore } = await import('../../src/session/store.js')
+    const { createSessionState } = await import('../../src/session/runtime.js')
+    const { resolveWorkspace } = await import('../../src/session/workspace.js')
+    const { startChat } = await import('../../src/cli/chat.js')
+    const workspace = await resolveWorkspace(process.cwd())
+    const store = new SessionStore(tempDir)
+    const state = createSessionState({
+      sessionId: 'session-interrupted',
+      kind: 'interactive',
+      mode: 'normal',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    state.messages = [{ role: 'user', content: 'previous context' }]
+    state.status = 'interrupted'
+    state.title = 'Resume interrupted task'
+    state.updatedAt = '2026-07-25T12:05:00.000Z'
+    state.lastActiveAt = '2026-07-25T12:05:00.000Z'
+    await store.saveSession(state)
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat(
+      {
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        sessions: {
+          enabled: true,
+          storePath: tempDir,
+          defaultScope: 'workspace',
+          includePromptSessions: false,
+        },
+      } as any,
+      { continueLast: true } as any,
+    )
+
+    expect(providerMocks.chat).not.toHaveBeenCalled()
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('interrupted'))
+
+    await callbacks.line('/session')
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Status: idle'))
+
+    await callbacks.line('continue working')
+
+    expect(providerMocks.chat).toHaveBeenCalledTimes(1)
+    expect(providerMocks.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          { role: 'user', content: 'previous context' },
+          { role: 'user', content: 'continue working' },
+        ],
+      }),
     )
 
     logSpy.mockRestore()

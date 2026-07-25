@@ -63,6 +63,10 @@ function assistantToolCallMessage(content: string, toolCalls: LLMToolCall[]): LL
   };
 }
 
+async function persistMessages(context: RunContext): Promise<void> {
+  await context.onMessagesChanged?.([...context.messages]);
+}
+
 async function executeOneToolCall(
   toolCall: LLMToolCall,
   toolRegistry: ToolRegistry,
@@ -118,6 +122,7 @@ export async function executeToolCalls(
       toolName: toolCall.name,
       content: JSON.stringify(result),
     });
+    await persistMessages(context);
   }
 }
 
@@ -127,6 +132,7 @@ export async function runExecutionLoop(
   maxIterations: number,
 ): Promise<ModeRunResult> {
   context.messages.push({ role: "user", content: input });
+  await persistMessages(context);
 
   let assistantContent: string | undefined;
   let iteration = 0;
@@ -142,18 +148,24 @@ export async function runExecutionLoop(
         messages: [...context.messages],
         systemPrompt: context.config.systemPrompt,
         tools: context.toolRegistry.getToolDefinitions(),
+        signal: context.abortSignal,
       })
       .finally(() => {
         context.timing.thinkingMs += elapsedSince(thinkingStartedAt);
       });
 
     context.usageTracker.record(response.usage);
+    const costWarning = context.costTracker?.record(response.model, response.usage);
     if (response.usage) {
       context.output?.onTokenUsage?.(response.usage);
+    }
+    if (costWarning) {
+      context.output?.onWarning?.(costWarning);
     }
 
     if (response.toolCalls && response.toolCalls.length > 0) {
       context.messages.push(assistantToolCallMessage(response.content, response.toolCalls));
+      await persistMessages(context);
       await executeToolCalls(response.toolCalls, context);
       continue;
     }
@@ -161,6 +173,7 @@ export async function runExecutionLoop(
     if (response.content) {
       assistantContent = response.content;
       context.messages.push({ role: "assistant", content: response.content });
+      await persistMessages(context);
       context.output?.onAssistantMessage?.(response.content);
     }
 

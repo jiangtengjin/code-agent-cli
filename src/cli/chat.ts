@@ -1,16 +1,24 @@
 import * as readline from "node:readline";
 import chalk from "chalk";
 import ora from "ora";
+import { CostTracker, formatCostSnapshot } from "../llm/cost-tracker.js";
 import type { LLMProvider } from "../llm/provider.js";
 import { createProviderFromConfig } from "../llm/registry.js";
+import { executeApprovedPlan, formatPlanState } from "../modes/plan.js";
 import { ModeRouter } from "../modes/router.js";
 import { createTaskTiming, formatTaskTiming } from "../session/execution.js";
+import { SessionPersistence } from "../session/persistence.js";
+import { createSessionSummary } from "../session/runtime.js";
+import { SessionStore } from "../session/store.js";
 import { UsageTracker, formatUsageSnapshot } from "../session/usage.js";
+import { resolveWorkspace } from "../session/workspace.js";
 import { createDefaultToolRegistry } from "../tools/built-in/index.js";
 import { MCPServerManager, type MCPSummary } from "../tools/mcp/manager.js";
 import type { Config } from "../types/config.js";
 import type { ChatMode } from "../types/mode.js";
+import type { PlanState } from "../types/plan.js";
 import type { LLMMessage, LLMToolCall, LLMUsage } from "../types/provider.js";
+import type { SessionState } from "../types/session.js";
 import type { ToolResult } from "../types/tool.js";
 import { maskApiKey } from "../utils/api-key.js";
 import { formatDuration } from "../utils/format.js";
@@ -133,10 +141,41 @@ const COMMANDS: SlashCommand[] = [
     keywords: ["清空", "清除", "历史", "重置"],
   },
   {
+    name: "session",
+    desc: "查看当前会话摘要",
+    keywords: ["会话", "摘要", "状态", "session"],
+  },
+  {
+    name: "resume",
+    desc: "恢复历史会话或查看会话列表",
+    keywords: ["恢复", "历史", "会话", "resume"],
+  },
+  {
+    name: "fork",
+    desc: "基于当前会话创建分支",
+    keywords: ["分支", "fork", "派生", "复制会话"],
+  },
+  {
+    name: "archive",
+    desc: "归档当前会话",
+    keywords: ["归档", "隐藏会话", "archive"],
+  },
+  {
+    name: "unarchive",
+    desc: "取消归档目标会话",
+    keywords: ["取消归档", "恢复归档", "unarchive"],
+  },
+  {
     name: "usage",
     desc: "Show token usage",
     aliases: ["tokens"],
     keywords: ["usage", "token", "tokens"],
+  },
+  {
+    name: "cost",
+    desc: "查看费用统计",
+    aliases: ["bill"],
+    keywords: ["cost", "费用", "账单", "price"],
   },
   {
     name: "exit",
@@ -327,7 +366,15 @@ async function handleSlashCommand(
     mode: ChatMode;
     config: Config;
     usageTracker: UsageTracker;
+    costTracker: CostTracker;
     setMode: (m: ChatMode) => void;
+    clearPendingPlan?: () => void;
+    onSessionUpdated?: (reason?: string) => Promise<void> | void;
+    showSession?: () => Promise<void> | void;
+    resumeSession?: (query?: string) => Promise<void> | void;
+    forkSession?: (name?: string) => Promise<void> | void;
+    archiveSession?: () => Promise<void> | void;
+    unarchiveSession?: (query: string) => Promise<void> | void;
     onExit?: (code: number) => Promise<void> | void;
   },
 ): Promise<"continue" | "exit"> {
@@ -342,6 +389,11 @@ async function handleSlashCommand(
 ${chalk.bold("可用命令:")}
   ${chalk.yellow("/model")}          查看当前模型
   ${chalk.yellow("/mode <mode>")}    切换模式 (normal/auto/plan/edit)
+  ${chalk.yellow("/session")}        查看当前会话摘要
+  ${chalk.yellow("/resume [query]")} 恢复历史会话或查看列表
+  ${chalk.yellow("/fork [name]")}    基于当前会话创建分支
+  ${chalk.yellow("/archive")}        归档当前会话
+  ${chalk.yellow("/unarchive <q>")}  取消归档目标会话
   ${chalk.yellow("/clear")}          清空对话历史
   ${chalk.yellow("/usage")}         Show token usage
   ${chalk.yellow("/help")}           显示此帮助
@@ -356,6 +408,7 @@ ${chalk.bold("可用命令:")}
     case "mode":
       if (args[0] && ["normal", "auto", "plan", "edit"].includes(args[0])) {
         ctx.setMode(args[0] as ChatMode);
+        await ctx.onSessionUpdated?.("mode");
         console.log(chalk.green(`切换到模式: ${args[0]}`));
       } else {
         console.log(chalk.yellow(`当前模式: ${ctx.mode}`));
@@ -364,7 +417,53 @@ ${chalk.bold("可用命令:")}
 
     case "clear":
       ctx.messages.length = 0;
+      ctx.clearPendingPlan?.();
+      await ctx.onSessionUpdated?.("clear");
       console.log(chalk.green("对话历史已清空"));
+      break;
+
+    case "session":
+      if (ctx.showSession) {
+        await ctx.showSession();
+      } else {
+        console.log(chalk.yellow("当前没有会话信息"));
+      }
+      break;
+
+    case "resume":
+      if (ctx.resumeSession) {
+        await ctx.resumeSession(args.join(" ").trim() || undefined);
+      } else {
+        console.log(chalk.yellow("当前不支持恢复会话"));
+      }
+      break;
+
+    case "fork":
+      if (ctx.forkSession) {
+        await ctx.forkSession(args.join(" ").trim() || undefined);
+      } else {
+        console.log(chalk.yellow("当前不支持创建会话分支"));
+      }
+      break;
+
+    case "archive":
+      if (ctx.archiveSession) {
+        await ctx.archiveSession();
+      } else {
+        console.log(chalk.yellow("当前没有可归档的会话"));
+      }
+      break;
+
+    case "unarchive":
+      if (!args.length) {
+        console.log(chalk.yellow("请提供要取消归档的会话 ID 或标题前缀"));
+        break;
+      }
+      if (ctx.unarchiveSession) {
+        await ctx.unarchiveSession(args.join(" ").trim());
+      } else {
+        console.log(chalk.yellow("当前不支持取消归档会话"));
+      }
       break;
 
     case "usage":
@@ -373,6 +472,10 @@ ${chalk.bold("可用命令:")}
           formatUsageSnapshot(ctx.usageTracker.snapshot(), ctx.config.model?.model ?? "unknown"),
         ),
       );
+      break;
+
+    case "cost":
+      console.log(chalk.yellow(formatCostSnapshot(ctx.costTracker.snapshot())));
       break;
 
     case "exit":
@@ -446,14 +549,132 @@ function userConfirm(toolCall: LLMToolCall, rl: readline.Interface): Promise<boo
 const CHAT_PROMPT = chalk.dim("│ ") + chalk.cyan("❯ ");
 const SUGGESTION_LIMIT = 6;
 
-export async function runPrompt(config: Config, prompt: string): Promise<void> {
-  if (!config.model?.apiKey) {
-    console.error(chalk.red("API Key is not configured. Run code-agent init first."));
-    process.exit(1);
-    return;
+function isPlanApprovalInput(input: string): boolean {
+  const normalized = input.trim().toLowerCase();
+  return ["y", "yes", "确认", "执行", "继续"].includes(normalized);
+}
+
+function isPlanRejectInput(input: string): boolean {
+  const normalized = input.trim().toLowerCase();
+  return ["n", "no", "取消", "停止"].includes(normalized);
+}
+
+function printPlanState(plan: PlanState): void {
+  const header = chalk.dim("─── PLAN ──────────────────────────────────────");
+  const footer = chalk.dim("────────────────────────────────────────────────");
+  console.log(`\n${header}\n${formatPlanState(plan)}\n${footer}\n`);
+}
+
+function formatPlanProgress(plan: PlanState): string {
+  const total = plan.steps.length;
+  const done = plan.steps.filter((step) => step.status === "done").length;
+  const runningIndex = plan.steps.findIndex((step) => step.status === "running");
+
+  if (runningIndex >= 0) {
+    return `Plan step ${runningIndex + 1}/${total}: ${plan.steps[runningIndex].title}`;
   }
 
-  const provider = createProviderFromConfig(config);
+  const failedIndex = plan.steps.findIndex((step) => step.status === "failed");
+  if (failedIndex >= 0) {
+    return `Plan failed at ${failedIndex + 1}/${total}: ${plan.steps[failedIndex].title}`;
+  }
+
+  return `Plan progress: ${done}/${total} steps completed`;
+}
+
+function createProviderOrExit(config: Config): LLMProvider | null {
+  try {
+    return createProviderFromConfig(config);
+  } catch (error) {
+    displayError(error);
+    process.exit(1);
+    return null;
+  }
+}
+
+export type StartChatOptions = {
+  continueLast?: boolean;
+  resumeLast?: boolean;
+  resumeAll?: boolean;
+  resumeQuery?: string;
+};
+
+type InitialSessionLoadResult = {
+  session: SessionState;
+  resumedFromInterrupted: boolean;
+};
+
+function isAbortError(error: unknown): boolean {
+  if (error instanceof Error) {
+    return error.name === "AbortError";
+  }
+
+  return false;
+}
+
+function normalizeInterruptedSession(state: SessionState): InitialSessionLoadResult {
+  if (state.status !== "interrupted") {
+    return {
+      session: state,
+      resumedFromInterrupted: false,
+    };
+  }
+
+  const normalized = structuredClone(state);
+  normalized.status = "idle";
+
+  if (normalized.pendingPlan) {
+    for (const step of normalized.pendingPlan.steps) {
+      if (step.status === "running") {
+        step.status = "pending";
+        step.error = undefined;
+      }
+    }
+  }
+
+  return {
+    session: normalized,
+    resumedFromInterrupted: true,
+  };
+}
+
+async function loadInitialSession(
+  config: Config,
+  options: StartChatOptions,
+): Promise<InitialSessionLoadResult | undefined> {
+  if (!config.sessions?.enabled || !config.sessions.storePath) {
+    return undefined;
+  }
+
+  if (!options.continueLast && !options.resumeLast && !options.resumeQuery) {
+    return undefined;
+  }
+
+  const workspace = await resolveWorkspace(process.cwd());
+  const store = new SessionStore(config.sessions.storePath);
+  const queryOptions = {
+    workspaceKey: workspace.key,
+    kind: "interactive" as const,
+    includeAllWorkspaces: Boolean(options.resumeAll),
+  };
+
+  const summary = options.resumeQuery
+    ? await store.findSessionByQuery(options.resumeQuery, queryOptions)
+    : await store.findLatestSession(queryOptions);
+
+  if (!summary) {
+    return undefined;
+  }
+
+  const state = await store.loadSession(summary.id);
+  return state ? normalizeInterruptedSession(state) : undefined;
+}
+
+export async function runPrompt(config: Config, prompt: string): Promise<void> {
+  const provider = createProviderOrExit(config);
+  if (!provider) {
+    return;
+  }
   const toolRegistry = createDefaultToolRegistry();
   const mcpManager = new MCPServerManager(config.mcpServers, toolRegistry, {
     onWarning: (message) => {
@@ -463,32 +684,82 @@ export async function runPrompt(config: Config, prompt: string): Promise<void> {
   const messages: LLMMessage[] = [];
   const timing = createTaskTiming();
   const usageTracker = new UsageTracker();
+  const costTracker = new CostTracker(config.costGuard);
   const modeRouter = new ModeRouter();
-  const handler = modeRouter.getHandler(config.mode);
+  let mode: ChatMode = (config.mode as ChatMode) ?? "normal";
+  let pendingPlan: PlanState | undefined;
+  const handler = modeRouter.getHandler(mode);
+  const persistence = new SessionPersistence({
+    enabled: config.sessions?.enabled !== false,
+    storePath: config.sessions?.storePath,
+    kind: "prompt",
+    usageTracker,
+    costTracker,
+    getMode: () => mode,
+    getMessages: () => messages,
+    getPendingPlan: () => pendingPlan,
+  });
 
   try {
+    await persistence.initialize();
     await mcpManager.startAll();
-    await handler.run(prompt, {
+    await persistence.updateStatus("running");
+
+    const runContext = {
       provider,
       toolRegistry,
       messages,
       config,
       usageTracker,
+      costTracker,
       timing,
       skipConfirm: Boolean(config.yolo),
       confirmToolCall: async () => false,
+      onMessagesChanged: (nextMessages: LLMMessage[]) => persistence.handleMessagesChanged(nextMessages),
+      onPlanStateChanged: (plan?: PlanState) => persistence.handlePlanStateChanged(plan),
+      onStatusChanged: (status: "idle" | "running" | "awaiting_plan_approval" | "interrupted" | "archived", reason?: string) =>
+        persistence.updateStatus(status, reason),
       output: {
-        onAssistantMessage: (content) => {
+        onAssistantMessage: (content: string) => {
           console.log(content);
         },
         onTokenUsage: printTokenUsage,
         onToolStart: printToolStart,
         onToolResult: printToolResult,
-        onWarning: (message) => {
+        onWarning: (message: string) => {
           console.log(chalk.yellow(`\n${message}`));
         },
+        onPlanState: printPlanState,
       },
-    });
+    };
+
+    const modeResult = await handler.run(prompt, runContext);
+
+    if (modeResult.planState) {
+      pendingPlan = modeResult.planState;
+      if (config.yolo) {
+        await persistence.updateStatus("running");
+        await executeApprovedPlan(
+          modeResult.planState,
+          {
+            ...runContext,
+            skipConfirm: true,
+            confirmToolCall: async () => true,
+          },
+          handler.maxIterations,
+        );
+        pendingPlan = undefined;
+        await persistence.handlePlanStateChanged(undefined);
+        await persistence.updateStatus("idle");
+      } else {
+        await persistence.updateStatus("awaiting_plan_approval");
+        console.log(
+          chalk.yellow("Plan generated. Re-run with --yolo or use interactive chat to execute it."),
+        );
+      }
+    } else {
+      await persistence.updateStatus("idle");
+    }
   } catch (error) {
     displayError(error);
   } finally {
@@ -498,24 +769,48 @@ export async function runPrompt(config: Config, prompt: string): Promise<void> {
   console.log(chalk.gray(formatTaskTiming(timing)));
 }
 
-export async function startChat(config: Config): Promise<void> {
-  if (!config.model?.apiKey) {
+export async function startChat(
+  config: Config,
+  options: StartChatOptions = {},
+): Promise<void> {
+  if (!config.model?.apiKey && !config.models && config.model?.provider !== "ollama") {
     console.error(chalk.red("API Key 未配置。请运行 code-agent init 初始化配置。"));
     process.exit(1);
     return;
   }
 
-  const provider = createProviderFromConfig(config);
+  const provider = createProviderOrExit(config);
+  if (!provider) {
+    return;
+  }
   const toolRegistry = createDefaultToolRegistry();
   const mcpManager = new MCPServerManager(config.mcpServers, toolRegistry, {
     onWarning: (message) => {
       console.log(chalk.yellow(message));
     },
   });
-  const messages: LLMMessage[] = [];
-  const usageTracker = new UsageTracker();
+  const initialSessionLoad = await loadInitialSession(config, options);
+  const initialSession = initialSessionLoad?.session;
+  const messages: LLMMessage[] = initialSession ? [...initialSession.messages] : [];
+  const usageTracker = new UsageTracker(initialSession?.usage);
+  const costTracker = new CostTracker(config.costGuard, initialSession?.cost);
   const modeRouter = new ModeRouter();
-  let mode: ChatMode = (config.mode as ChatMode) ?? "normal";
+  let mode: ChatMode = initialSession?.mode ?? ((config.mode as ChatMode) ?? "normal");
+  let pendingPlan: PlanState | undefined = initialSession?.pendingPlan;
+  const sessionStore =
+    config.sessions?.enabled !== false && config.sessions?.storePath
+      ? new SessionStore(config.sessions.storePath)
+      : undefined;
+  const persistence = new SessionPersistence({
+    enabled: config.sessions?.enabled !== false,
+    storePath: config.sessions?.storePath,
+    kind: "interactive",
+    usageTracker,
+    costTracker,
+    getMode: () => mode,
+    getMessages: () => messages,
+    getPendingPlan: () => pendingPlan,
+  });
   type KeypressListener = (str: string, key: { name?: string; ctrl?: boolean }) => void;
   const cleanupHooks: {
     clearSuggestionBlock?: () => void;
@@ -534,6 +829,143 @@ export async function startChat(config: Config): Promise<void> {
   let exitRequested = false;
   let exitCode = 0;
   let exitHandled = false;
+  let activeRun:
+    | {
+        controller: AbortController;
+        spinner: ReturnType<typeof ora>;
+        interruptRequested: boolean;
+        forceExitRequested: boolean;
+      }
+    | undefined;
+
+  function resetRuntimeState(): void {
+    messages.length = 0;
+    pendingPlan = undefined;
+    usageTracker.reset();
+    costTracker.reset();
+  }
+
+  function applySessionState(state: SessionState): void {
+    messages.splice(0, messages.length, ...state.messages);
+    mode = state.mode;
+    pendingPlan = state.pendingPlan;
+    usageTracker.restore(state.usage);
+    costTracker.restore(state.cost);
+    persistence.hydrate(state);
+  }
+
+  function printSessionSummary(): void {
+    const state = persistence.getCurrentState();
+    if (!state) {
+      console.log(chalk.yellow("当前还没有活跃会话"));
+      return;
+    }
+
+    const summary = createSessionSummary(state);
+    console.log(
+      [
+        `Session ID: ${summary.id}`,
+        `Title: ${summary.title}`,
+        `Status: ${summary.status}`,
+        `Mode: ${summary.mode}`,
+        `Workspace: ${summary.workspacePath}`,
+        `Turns: ${summary.turnCount}`,
+      ].join("\n"),
+    );
+  }
+
+  async function resumeSessionFromSlash(query?: string): Promise<void> {
+    if (!sessionStore) {
+      console.log(chalk.yellow("会话持久化未启用"));
+      return;
+    }
+
+    const workspace = await resolveWorkspace(process.cwd());
+    if (!query) {
+      const sessions = await sessionStore.listSessions({
+        workspaceKey: workspace.key,
+        kind: "interactive",
+      });
+
+      if (sessions.length === 0) {
+        console.log(chalk.yellow("当前工作区没有可恢复的会话"));
+        return;
+      }
+
+      const rows = sessions
+        .slice(0, 10)
+        .map((session, index) => `${index + 1}. ${session.id}  ${session.title}`);
+      console.log(rows.join("\n"));
+      return;
+    }
+
+    const summary = await sessionStore.findSessionByQuery(query, {
+      workspaceKey: workspace.key,
+      kind: "interactive",
+    });
+
+    if (!summary) {
+      console.log(chalk.yellow(`未找到会话: ${query}`));
+      return;
+    }
+
+    const state = await sessionStore.loadSession(summary.id);
+    if (!state) {
+      console.log(chalk.yellow(`无法加载会话: ${summary.id}`));
+      return;
+    }
+
+    applySessionState(state);
+    console.log(chalk.green(`已恢复会话: ${summary.title}`));
+  }
+
+  async function archiveCurrentSession(): Promise<void> {
+    const archived = await persistence.archiveCurrentSession();
+    if (!archived) {
+      console.log(chalk.yellow("当前没有可归档的会话"));
+      return;
+    }
+
+    resetRuntimeState();
+    console.log(chalk.green(`已归档当前会话: ${archived.title}`));
+  }
+
+  async function forkCurrentSession(name?: string): Promise<void> {
+    const forked = await persistence.forkCurrentSession(name);
+    if (!forked) {
+      console.log(chalk.yellow("当前没有可分叉的会话"));
+      return;
+    }
+
+    messages.splice(0, messages.length, ...forked.messages);
+    pendingPlan = forked.pendingPlan;
+    usageTracker.restore(forked.usage);
+    costTracker.restore(forked.cost);
+    mode = forked.mode;
+    console.log(chalk.green(`已创建会话分支: ${forked.title}`));
+  }
+
+  async function unarchiveSession(query: string): Promise<void> {
+    if (!sessionStore) {
+      console.log(chalk.yellow("会话持久化未启用"));
+      return;
+    }
+
+    const workspace = await resolveWorkspace(process.cwd());
+    const summary = await sessionStore.findSessionByQuery(query, {
+      workspaceKey: workspace.key,
+      kind: "interactive",
+      includeArchived: true,
+    });
+
+    if (!summary || summary.status !== "archived") {
+      console.log(chalk.yellow(`未找到已归档会话: ${query}`));
+      return;
+    }
+
+    await sessionStore.setArchiveState(summary.id, false, new Date().toISOString());
+    console.log(chalk.green(`已取消归档: ${summary.title}`));
+  }
 
   function logCleanupError(action: string, error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
@@ -622,6 +1054,10 @@ export async function startChat(config: Config): Promise<void> {
     }
   }
 
+  await persistence.initialize();
+  if (initialSession) {
+    persistence.hydrate(initialSession);
+  }
   await mcpManager.startAll();
   await runSetup(() => displayWelcome(config, provider, mcpManager.getSummary()));
 
@@ -645,6 +1081,32 @@ export async function startChat(config: Config): Promise<void> {
 
   function setChatPrompt(): void {
     rl.setPrompt(CHAT_PROMPT);
+  }
+
+  function setMode(nextMode: ChatMode): void {
+    mode = nextMode;
+    if (nextMode !== "plan") {
+      pendingPlan = undefined;
+    }
+  }
+
+  async function resetInterruptedPlanState(): Promise<void> {
+    if (!pendingPlan) {
+      return;
+    }
+
+    let changed = false;
+    for (const step of pendingPlan.steps) {
+      if (step.status === "running") {
+        step.status = "pending";
+        step.error = undefined;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      await persistence.handlePlanStateChanged(pendingPlan);
+    }
   }
 
   function formatSuggestionRows(line: string): string[] {
@@ -740,15 +1202,51 @@ export async function startChat(config: Config): Promise<void> {
 
   function cycleMode(): void {
     const idx = MODES.indexOf(mode);
-    mode = MODES[(idx + 1) % MODES.length];
+    setMode(MODES[(idx + 1) % MODES.length]);
     redrawInputFrame(mode);
     setChatPrompt();
     rl.prompt(true);
     renderSuggestionBlock();
   }
 
+  function requestActiveRunInterrupt(): void {
+    if (!activeRun) {
+      return;
+    }
+
+    if (activeRun.interruptRequested) {
+      if (activeRun.forceExitRequested) {
+        return;
+      }
+
+      activeRun.forceExitRequested = true;
+      exitRequested = true;
+      exitCode = 130;
+      activeRun.spinner.stop();
+      console.log(chalk.yellow("Interrupt received again. Exiting after persisting the session state."));
+      void persistence
+        .updateStatus("interrupted", "ctrl_c")
+        .catch(() => undefined)
+        .finally(() => {
+          void shutdown({ exit: true, exitCode: 130 });
+        });
+      return;
+    }
+
+    activeRun.interruptRequested = true;
+    activeRun.controller.abort();
+  }
+
   const onKeypress: KeypressListener = (_str, key) => {
-    if (key.name === "return" || key.name === "enter" || (key.ctrl && key.name === "c")) {
+    if (key.ctrl && key.name === "c") {
+      clearSuggestionBlock();
+      if (activeRun) {
+        requestActiveRunInterrupt();
+      }
+      return;
+    }
+
+    if (key.name === "return" || key.name === "enter") {
       clearSuggestionBlock();
       return;
     }
@@ -799,10 +1297,20 @@ export async function startChat(config: Config): Promise<void> {
           mode,
           config,
           usageTracker,
+          costTracker,
           setMode: (m) => {
-            mode = m;
+            setMode(m);
             setChatPrompt();
           },
+          clearPendingPlan: () => {
+            pendingPlan = undefined;
+          },
+          onSessionUpdated: (reason) => persistence.handleSessionUpdated(reason),
+          showSession: () => printSessionSummary(),
+          resumeSession: (query) => resumeSessionFromSlash(query),
+          forkSession: (name) => forkCurrentSession(name),
+          archiveSession: () => archiveCurrentSession(),
+          unarchiveSession: (query) => unarchiveSession(query),
           onExit: (code) => shutdown({ exit: true, exitCode: code }),
         });
         if (commandResult === "exit") {
@@ -812,58 +1320,117 @@ export async function startChat(config: Config): Promise<void> {
         return;
       }
 
-      drawUserMessage(trimmed);
-
       const timing = createTaskTiming();
       const spinner = ora({ text: "AI thinking...", color: "cyan" }).start();
       const handler = modeRouter.getHandler(mode);
+      const abortController = new AbortController();
+      activeRun = {
+        controller: abortController,
+        spinner,
+        interruptRequested: false,
+        forceExitRequested: false,
+      };
+      await persistence.updateStatus("running");
+      const runContext = {
+        provider,
+        toolRegistry,
+        messages,
+        config,
+        usageTracker,
+        costTracker,
+        timing,
+        abortSignal: abortController.signal,
+        skipConfirm: Boolean(config.yolo),
+        confirmToolCall: (toolCall: LLMToolCall) => userConfirm(toolCall, rl),
+        onMessagesChanged: (nextMessages: LLMMessage[]) => persistence.handleMessagesChanged(nextMessages),
+        onPlanStateChanged: (plan?: PlanState) => persistence.handlePlanStateChanged(plan),
+        onStatusChanged: (status: "idle" | "running" | "awaiting_plan_approval" | "interrupted" | "archived", reason?: string) =>
+          persistence.updateStatus(status, reason),
+        output: {
+          onIteration: (iteration: number) => {
+            if (iteration > 1) {
+              spinner.text = `AI executing... (step ${iteration - 1})`;
+              spinner.start();
+            }
+          },
+          onAssistantMessage: (content: string) => {
+            spinner.stop();
+            const header = chalk.dim("─── AI ────────────────────────────────────────");
+            const footer = chalk.dim("────────────────────────────────────────────────");
+            console.log(`\n${header}\n${content}\n${footer}\n`);
+          },
+          onTokenUsage: (usage: LLMUsage) => {
+            spinner.stop();
+            printTokenUsage(usage);
+          },
+          onToolStart: (toolCall: LLMToolCall) => {
+            spinner.stop();
+            printToolStart(toolCall);
+          },
+          onToolResult: (toolCall: LLMToolCall, result: ToolResult, elapsedMs: number) => {
+            spinner.stop();
+            printToolResult(toolCall, result, elapsedMs);
+          },
+          onWarning: (message: string) => {
+            spinner.stop();
+            console.log(chalk.yellow(message));
+          },
+          onPlanState: (plan: PlanState) => {
+            spinner.text = formatPlanProgress(plan);
+            spinner.start();
+          },
+        },
+      };
 
       try {
-        await handler.run(trimmed, {
-          provider,
-          toolRegistry,
-          messages,
-          config,
-          usageTracker,
-          timing,
-          skipConfirm: Boolean(config.yolo),
-          confirmToolCall: (toolCall) => userConfirm(toolCall, rl),
-          output: {
-            onIteration: (iteration) => {
-              if (iteration > 1) {
-                spinner.text = `AI executing... (step ${iteration - 1})`;
-                spinner.start();
-              }
-            },
-            onAssistantMessage: (content) => {
-              spinner.stop();
-              const header = chalk.dim("─── AI ────────────────────────────────────────");
-              const footer = chalk.dim("────────────────────────────────────────────────");
-              console.log(`\n${header}\n${content}\n${footer}\n`);
-            },
-            onTokenUsage: (usage) => {
-              spinner.stop();
-              printTokenUsage(usage);
-            },
-            onToolStart: (toolCall) => {
-              spinner.stop();
-              printToolStart(toolCall);
-            },
-            onToolResult: (toolCall, result, elapsedMs) => {
-              spinner.stop();
-              printToolResult(toolCall, result, elapsedMs);
-            },
-            onWarning: (message) => {
-              spinner.stop();
-              console.log(chalk.yellow(message));
-            },
-          },
-        });
+        if (mode === "plan" && pendingPlan) {
+          if (isPlanApprovalInput(trimmed)) {
+            const approvedPlan = pendingPlan;
+            await executeApprovedPlan(approvedPlan, runContext, handler.maxIterations);
+            pendingPlan = undefined;
+            await persistence.handlePlanStateChanged(undefined);
+            await persistence.updateStatus("idle");
+          } else if (isPlanRejectInput(trimmed)) {
+            pendingPlan = undefined;
+            await persistence.handlePlanStateChanged(undefined);
+            await persistence.updateStatus("idle");
+            spinner.stop();
+            console.log(chalk.yellow("已取消当前计划"));
+          } else {
+            const result = await handler.run(
+              `${pendingPlan.originalTask}\n\n用户反馈：${trimmed}`,
+              runContext,
+            );
+            pendingPlan = result.planState;
+            await persistence.updateStatus("awaiting_plan_approval");
+          }
+        } else {
+          const result = await handler.run(trimmed, runContext);
+          pendingPlan = result.planState;
+          await persistence.updateStatus(result.planState ? "awaiting_plan_approval" : "idle");
+        }
       } catch (error) {
-        spinner.stop();
-        displayError(error);
+        if (activeRun?.interruptRequested && isAbortError(error)) {
+          await resetInterruptedPlanState();
+          await persistence.updateStatus("interrupted", "ctrl_c");
+          spinner.stop();
+          console.log(
+            chalk.yellow(
+              "Current execution was interrupted. The session was preserved and can be resumed.",
+            ),
+          );
+        } else {
+          await persistence.updateStatus("idle");
+          spinner.stop();
+          displayError(error);
+        }
       } finally {
+        activeRun = undefined;
         spinner.stop();
+      }
+
+      if (exitRequested) {
+        return;
       }
 
       console.log(chalk.gray(formatTaskTiming(timing)));
@@ -874,6 +1441,12 @@ export async function startChat(config: Config): Promise<void> {
   await runSetup(() => {
     promptNextInput();
   });
+
+  if (initialSessionLoad?.resumedFromInterrupted) {
+    console.log(
+      chalk.yellow("Restored an interrupted session. Review the context and continue when ready."),
+    );
+  }
 
   await runSetup(() => {
     rl.on("close", async () => {

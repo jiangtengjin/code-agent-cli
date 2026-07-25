@@ -18,9 +18,11 @@ import type { CLIOptions } from "../config/resolver.js";
 import { setupWizard } from "../config/wizard.js";
 import { debug } from "../utils/logger.js";
 import { configEdit, configGet, configList, configSet } from "./config.js";
+import { mcpAdd, mcpList, mcpRemove } from "./mcp.js";
 
 export function createProgram(): Command {
   const program = new Command();
+  program.enablePositionalOptions();
 
   // 全局选项和默认行为
   program
@@ -28,6 +30,7 @@ export function createProgram(): Command {
     .description("终端原生编码智能体工具")
     .version("0.1.0")
     .option("-p, --prompt <text>", "非交互模式，直接执行任务")
+    .option("--continue", "恢复当前工作区最近一次会话")
     .option("-m, --mode <mode>", "指定对话模式")
     .option("--model <model>", "指定模型")
     .option("--yolo", "自主模式，跳过用户确认")
@@ -45,7 +48,9 @@ export function createProgram(): Command {
         await runPrompt(config, options.prompt);
         return;
       }
-      await startChat(config);
+      await startChat(config, {
+        continueLast: Boolean(options.continue),
+      });
     });
 
   // code-agent init — 配置向导
@@ -71,6 +76,55 @@ export function createProgram(): Command {
   configCmd.command("edit").action(configEdit);
 
   program.addCommand(configCmd);
+
+  const mcpCmd = new Command("mcp").description("管理 MCP 服务");
+  mcpCmd.enablePositionalOptions();
+
+  mcpCmd
+    .command("add")
+    .description("添加 MCP 服务")
+    .argument("<name>", "服务名称")
+    .argument("<command>", "启动命令")
+    .argument("[args...]", "命令参数")
+    .option("--transport <transport>", "传输协议", "stdio")
+    .option("--url <url>", "SSE/HTTP 服务地址")
+    .option("--env <entry...>", "环境变量，格式 KEY=VALUE")
+    .passThroughOptions()
+    .addHelpText(
+      "after",
+      [
+        "",
+        "提示:",
+        "  <command> 后的选项会原样透传给 MCP 服务进程。",
+        "  如果要使用 mcp add 自身的 --transport/--url/--env 选项，请放在 <name> 之前。",
+      ].join("\n"),
+    )
+    .action(mcpAdd);
+
+  mcpCmd.command("remove").argument("<name>", "服务名称").action(mcpRemove);
+  mcpCmd.command("list").action(mcpList);
+
+  program.addCommand(mcpCmd);
+
+  program
+    .command("resume")
+    .description("恢复历史会话")
+    .argument("[query]", "会话 ID 或标题前缀")
+    .option("--last", "恢复当前工作区最近一次会话")
+    .option("--all", "跨工作区检索")
+    .action(async (query: string | undefined, options: { last?: boolean; all?: boolean }) => {
+      const { ConfigResolver } = await import("../config/resolver.js");
+      const { startChat } = await import("./chat.js");
+      const resolver = new ConfigResolver();
+      const config = await resolver.resolve({});
+
+      await startChat(config, {
+        continueLast: false,
+        resumeLast: Boolean(options.last || !query),
+        resumeAll: Boolean(options.all),
+        resumeQuery: query,
+      });
+    });
 
   return program;
 }

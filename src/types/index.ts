@@ -11,6 +11,7 @@ export type {
   RAGConfig,
   TerminalConfig,
   CostGuardConfig,
+  SessionsConfig,
 } from "./config.js";
 export type { ChatMode } from "./mode.js";
 export type {
@@ -22,3 +23,11 @@ export type {
 } from "./provider.js";
 export type { ToolDefinition, ToolResult, ToolCall } from "./tool.js";
 export type { MCPToolDefinition, MCPCallToolResult } from "./mcp.js";
+export type { PlanState, PlanStep, PlanStepStatus } from "./plan.js";
+export type {
+  SessionEvent,
+  SessionKind,
+  SessionState,
+  SessionStatus,
+  SessionSummary,
+} from "./session.js";

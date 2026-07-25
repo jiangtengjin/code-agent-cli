@@ -7,6 +7,7 @@ export interface ChatParams {
   maxTokens?: number;
   temperature?: number;
   tools?: ToolDefinition[];
+  signal?: AbortSignal;
 }
 
 export interface LLMProvider {
