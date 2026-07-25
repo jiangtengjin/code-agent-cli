@@ -1,3 +1,4 @@
+import { parse } from "jsonc-parser";
 import { runExecutionLoop } from "../session/execution.js";
 import type { PlanState } from "../types/plan.js";
 import type { LLMResponse } from "../types/provider.js";
@@ -12,19 +13,61 @@ type ParsedPlanResponse = {
 };
 
 const PLAN_SYSTEM_PROMPT = [
-  "你处于 Plan 模式。",
-  "请先分析用户任务，再输出一个可执行计划。",
-  '只返回 JSON，不要输出 Markdown 代码块。格式必须是 {"summary":"...","steps":[{"title":"...","prompt":"..."}]}。',
-  "steps 至少 1 个，最多 8 个，每个 prompt 应该能直接交给编码代理执行。",
+  "You are in plan mode.",
+  "Analyze the user's task and return an actionable execution plan.",
+  'Return only a JSON object in this exact shape: {"summary":"...","steps":[{"title":"...","prompt":"..."}]}.',
+  "Do not use markdown fences, comments, or trailing explanations.",
+  "Use 1 to 8 steps. Each prompt must be directly executable by the coding agent.",
 ].join("\n");
 
-function extractJsonPayload(content: string): string {
+const PLAN_PREFIX_REGEX =
+  /^(?:\[plan\]\s*|plan[:：]\s*|here is the plan[:：]?\s*|plan summary[:：]?\s*|steps[:：]\s*|以下是(?:执行)?计划[:：]?\s*|下面是(?:执行)?计划[:：]?\s*|计划如下[:：]?\s*|我会按以下步骤(?:执行|分析)?[:：]?\s*)/iu;
+const LIST_MARKER_REGEX =
+  /^\s*(?:[-*+]\s+|\d{1,2}[.)、]\s+|step\s*\d+\s*[:.)-]?\s+|[一二三四五六七八九十]+[、.)]\s+|第\s*[0-9一二三四五六七八九十]+\s*(?:步|阶段)[：:、.\s-]*)/iu;
+const INLINE_STEP_BREAK_REGEX =
+  /([。；;])\s*(?=(?:第\s*[0-9一二三四五六七八九十]+\s*(?:步|阶段)|step\s*\d+\s*[:.)-]?\s+|\d{1,2}[.)、]\s+))/giu;
+
+function normalizeWhitespace(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function cleanupPrompt(text: string): string {
+  return normalizeWhitespace(text.replace(/^[\s"'`]+|[\s"'`]+$/g, ""));
+}
+
+function cleanupTitle(text: string): string {
+  return cleanupPrompt(text)
+    .replace(/[。．.;；:：]+$/u, "")
+    .trim();
+}
+
+function cleanupSummary(text: string): string {
+  return cleanupPrompt(text).replace(PLAN_PREFIX_REGEX, "").trim();
+}
+
+function defaultSummary(originalTask: string, stepsCount: number): string {
+  const normalizedTask = cleanupPrompt(originalTask);
+  if (normalizedTask) {
+    return `Plan for: ${normalizedTask}`;
+  }
+
+  return `Generated ${stepsCount} plan steps`;
+}
+
+function stripCodeFences(content: string): string {
+  return content
+    .replace(/```(?:jsonc?|javascript|js|markdown)?\s*/giu, "")
+    .replace(/```/g, "")
+    .trim();
+}
+
+function extractJsonPayload(content: string): string | null {
   const trimmed = content.trim();
   if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
     return trimmed;
   }
 
-  const fencedMatch = /```(?:json)?\s*([\s\S]+?)\s*```/i.exec(trimmed);
+  const fencedMatch = /```(?:jsonc?|javascript|js)?\s*([\s\S]+?)\s*```/iu.exec(trimmed);
   if (fencedMatch) {
     return fencedMatch[1].trim();
   }
@@ -35,12 +78,192 @@ function extractJsonPayload(content: string): string {
     return trimmed.slice(start, end + 1);
   }
 
-  throw new Error("Plan mode did not return valid JSON");
+  return null;
+}
+
+function getFirstString(record: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && cleanupPrompt(value)) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function deriveStepTitle(prompt: string): string {
+  const normalized = cleanupPrompt(prompt);
+  const colonMatch = /^(.{3,80}?)[：:]\s+.+$/u.exec(normalized);
+  if (colonMatch) {
+    return cleanupTitle(colonMatch[1]);
+  }
+
+  const dashMatch = /^(.{3,80}?)\s[-–—]\s+.+$/u.exec(normalized);
+  if (dashMatch) {
+    return cleanupTitle(dashMatch[1]);
+  }
+
+  return cleanupTitle(normalized);
+}
+
+function normalizePlanStep(value: unknown): { title: string; prompt: string } | null {
+  if (typeof value === "string") {
+    const prompt = cleanupPrompt(value);
+    if (!prompt) {
+      return null;
+    }
+
+    return {
+      title: deriveStepTitle(prompt),
+      prompt,
+    };
+  }
+
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const promptCandidate =
+    getFirstString(record, ["prompt", "task", "instruction", "description", "title", "name"]) ?? "";
+  const prompt = cleanupPrompt(promptCandidate);
+  if (!prompt) {
+    return null;
+  }
+
+  const titleCandidate =
+    getFirstString(record, ["title", "name", "step", "task", "summary"]) ?? prompt;
+
+  return {
+    title: cleanupTitle(titleCandidate) || deriveStepTitle(prompt),
+    prompt,
+  };
+}
+
+function normalizeParsedPlan(value: unknown, originalTask: string): ParsedPlanResponse | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const stepsSource = Array.isArray(record.steps)
+    ? record.steps
+    : Array.isArray(record.plan)
+      ? record.plan
+      : null;
+
+  if (!stepsSource || stepsSource.length === 0) {
+    return null;
+  }
+
+  const steps = stepsSource
+    .map((step) => normalizePlanStep(step))
+    .filter((step): step is { title: string; prompt: string } => step !== null)
+    .slice(0, 8);
+
+  if (steps.length === 0) {
+    return null;
+  }
+
+  const summaryCandidate =
+    getFirstString(record, ["summary", "title", "goal", "description"]) ?? "";
+
+  return {
+    summary: cleanupSummary(summaryCandidate) || defaultSummary(originalTask, steps.length),
+    steps,
+  };
+}
+
+function tryParseStructuredPlan(content: string, originalTask: string): ParsedPlanResponse | null {
+  const payload = extractJsonPayload(content);
+  if (!payload) {
+    return null;
+  }
+
+  return normalizeParsedPlan(parse(payload), originalTask);
+}
+
+function stripListMarker(line: string): string {
+  return line.replace(LIST_MARKER_REGEX, "").trim();
+}
+
+function isStepLine(line: string): boolean {
+  return LIST_MARKER_REGEX.test(line);
+}
+
+function parseNaturalLanguagePlan(
+  content: string,
+  originalTask: string,
+): ParsedPlanResponse | null {
+  const normalized = stripCodeFences(content)
+    .replace(/\r\n?/g, "\n")
+    .replace(INLINE_STEP_BREAK_REGEX, "$1\n");
+
+  const lines = normalized
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.replace(/^\[PLAN\]\s*/iu, ""));
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  const summaryLines: string[] = [];
+  const stepBlocks: string[] = [];
+  let currentStep: string[] = [];
+  let seenStep = false;
+
+  for (const line of lines) {
+    if (isStepLine(line)) {
+      seenStep = true;
+      if (currentStep.length > 0) {
+        stepBlocks.push(normalizeWhitespace(currentStep.join(" ")));
+      }
+      currentStep = [stripListMarker(line)];
+      continue;
+    }
+
+    if (!seenStep) {
+      summaryLines.push(line);
+      continue;
+    }
+
+    currentStep.push(line);
+  }
+
+  if (currentStep.length > 0) {
+    stepBlocks.push(normalizeWhitespace(currentStep.join(" ")));
+  }
+
+  const steps = stepBlocks
+    .map((block) => cleanupPrompt(block))
+    .filter(Boolean)
+    .slice(0, 8)
+    .map((prompt) => ({
+      title: deriveStepTitle(prompt),
+      prompt,
+    }));
+
+  if (steps.length === 0) {
+    return null;
+  }
+
+  const summary = cleanupSummary(summaryLines.join(" "));
+
+  return {
+    summary: summary || defaultSummary(originalTask, steps.length),
+    steps,
+  };
 }
 
 function parsePlanResponse(response: LLMResponse, originalTask: string): PlanState {
-  const parsed = JSON.parse(extractJsonPayload(response.content)) as ParsedPlanResponse;
-  if (!parsed.summary || !Array.isArray(parsed.steps) || parsed.steps.length === 0) {
+  const parsed =
+    tryParseStructuredPlan(response.content, originalTask) ??
+    parseNaturalLanguagePlan(response.content, originalTask);
+
+  if (!parsed || !parsed.summary || !Array.isArray(parsed.steps) || parsed.steps.length === 0) {
     throw new Error("Plan mode returned an incomplete plan");
   }
 
@@ -60,13 +283,13 @@ export function formatPlanState(plan: PlanState): string {
   for (const [index, step] of plan.steps.entries()) {
     const status =
       step.status === "done"
-        ? "✓"
+        ? "[done]"
         : step.status === "running"
-          ? "⏳"
+          ? "[running]"
           : step.status === "failed"
-            ? "✗"
-            : "◻";
-    const suffix = step.error ? ` — ${step.error}` : "";
+            ? "[failed]"
+            : "[pending]";
+    const suffix = step.error ? ` - ${step.error}` : "";
     lines.push(`${index + 1}. ${status} ${step.title}${suffix}`);
   }
 
@@ -147,7 +370,7 @@ export class PlanModeHandler implements ModeHandler {
     }
 
     const planState = parsePlanResponse(response, input);
-    const formattedPlan = `${formatPlanState(planState)}\n\n输入 Y 确认执行，输入 N 取消，或直接输入修改意见。`;
+    const formattedPlan = `${formatPlanState(planState)}\n\nEnter Y to execute, N to cancel, or provide feedback to revise the plan.`;
     context.messages.push({ role: "assistant", content: formattedPlan });
     context.output?.onAssistantMessage?.(formattedPlan);
     context.output?.onPlanState?.(planState);

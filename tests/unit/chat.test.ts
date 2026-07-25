@@ -766,7 +766,7 @@ describe('startChat', () => {
 
     expect(providerMocks.chat).toHaveBeenCalledTimes(1)
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[PLAN]'))
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('输入 Y 确认执行'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Enter Y to execute'))
 
     logSpy.mockRestore()
   })

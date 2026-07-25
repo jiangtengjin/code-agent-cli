@@ -83,6 +83,89 @@ describe("PlanModeHandler", () => {
     });
   });
 
+  it("accepts jsonc-style plan output wrapped in prose", async () => {
+    const { context, output } = createContext([
+      {
+        content: [
+          "Here is the plan:",
+          "```json",
+          "{",
+          '  "summary": "Analyze the startup flow",',
+          '  "steps": [',
+          '    { "title": "Inspect package metadata", "prompt": "Read package.json and identify the startup scripts." },',
+          '    { "title": "Trace the CLI entry", "prompt": "Read src/index.ts and summarize how the CLI program boots." },',
+          "  ],",
+          "}",
+          "```",
+        ].join("\n"),
+        model: "test",
+      },
+    ]);
+
+    const result = await new PlanModeHandler().run(
+      "Analyze the startup flow without editing files",
+      context,
+    );
+
+    expect(result.planState).toMatchObject({
+      summary: "Analyze the startup flow",
+      steps: [
+        {
+          title: "Inspect package metadata",
+          prompt: "Read package.json and identify the startup scripts.",
+          status: "pending",
+        },
+        {
+          title: "Trace the CLI entry",
+          prompt: "Read src/index.ts and summarize how the CLI program boots.",
+          status: "pending",
+        },
+      ],
+    });
+    expect(output.onAssistantMessage).toHaveBeenCalledWith(expect.stringContaining("[PLAN]"));
+  });
+
+  it("falls back to numbered natural-language steps when the model does not return JSON", async () => {
+    const { context, output } = createContext([
+      {
+        content: [
+          "Plan: analyze the startup chain step by step.",
+          "1. Check package.json to confirm the executable entry and scripts.",
+          "2. Read src/index.ts to see how the CLI is created and parsed.",
+          "3. Trace src/cli/commands.ts and src/cli/chat.ts to explain the interactive startup path.",
+        ].join("\n"),
+        model: "test",
+      },
+    ]);
+
+    const result = await new PlanModeHandler().run(
+      "Analyze the startup flow without editing files",
+      context,
+    );
+
+    expect(result.planState).toMatchObject({
+      summary: "analyze the startup chain step by step.",
+      steps: [
+        {
+          title: "Check package.json to confirm the executable entry and scripts",
+          prompt: "Check package.json to confirm the executable entry and scripts.",
+          status: "pending",
+        },
+        {
+          title: "Read src/index.ts to see how the CLI is created and parsed",
+          prompt: "Read src/index.ts to see how the CLI is created and parsed.",
+          status: "pending",
+        },
+        {
+          title: "Trace src/cli/commands.ts and src/cli/chat.ts to explain the interactive startup path",
+          prompt: "Trace src/cli/commands.ts and src/cli/chat.ts to explain the interactive startup path.",
+          status: "pending",
+        },
+      ],
+    });
+    expect(output.onPlanState).toHaveBeenCalled();
+  });
+
   it("executes approved plan steps sequentially and marks them as done", async () => {
     const { context, output } = createContext([
       { content: "已分析项目结构", model: "test" },
