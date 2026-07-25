@@ -1,22 +1,21 @@
 /**
  * CLI 命令定义
  *
- * 使用 Commander.js 框架定义 code-agent 的命令树和全局选项。
- * 命令树结构：
+ * 使用 Commander.js 定义 code-agent 的命令树和全局选项。
+ * 命令结构：
  *   code-agent
- *     ├── (默认) → 进入 TUI 交互模式
- *     ├── init   → 配置向导
- *     └── config → 配置管理
- *         ├── set <key> <value>
- *         ├── get <key>
- *         ├── list
- *         └── edit
+ *     默认命令      进入交互模式
+ *     init          初始化配置
+ *     config        管理配置
+ *       set <key> <value>
+ *       get <key>
+ *       list
+ *       edit
  */
 
 import { Command } from "commander";
 import type { CLIOptions } from "../config/resolver.js";
 import { setupWizard } from "../config/wizard.js";
-import { debug } from "../utils/logger.js";
 import { configEdit, configGet, configList, configSet } from "./config.js";
 import { mcpAdd, mcpList, mcpRemove } from "./mcp.js";
 
@@ -24,7 +23,6 @@ export function createProgram(): Command {
   const program = new Command();
   program.enablePositionalOptions();
 
-  // 全局选项和默认行为
   program
     .name("code-agent")
     .description("终端原生编码智能体工具")
@@ -40,20 +38,22 @@ export function createProgram(): Command {
         const { setDebug } = await import("../utils/logger.js");
         setDebug(true);
       }
+
       const { ConfigResolver } = await import("../config/resolver.js");
       const { runPrompt, startChat } = await import("./chat.js");
       const resolver = new ConfigResolver();
       const config = await resolver.resolve(options);
+
       if (options.prompt) {
         await runPrompt(config, options.prompt);
         return;
       }
+
       await startChat(config, {
         continueLast: Boolean(options.continue),
       });
     });
 
-  // code-agent init — 配置向导
   program
     .command("init")
     .description("在当前项目初始化配置文件")
@@ -61,7 +61,6 @@ export function createProgram(): Command {
       await setupWizard();
     });
 
-  // code-agent config — 配置管理
   const configCmd = new Command("config").description("管理配置");
 
   configCmd
@@ -71,7 +70,6 @@ export function createProgram(): Command {
     .action(configSet);
 
   configCmd.command("get").argument("<key>", "配置键").action(configGet);
-
   configCmd.command("list").action(configList);
   configCmd.command("edit").action(configEdit);
 
@@ -94,7 +92,7 @@ export function createProgram(): Command {
       "after",
       [
         "",
-        "提示:",
+        "提示：",
         "  <command> 后的选项会原样透传给 MCP 服务进程。",
         "  如果要使用 mcp add 自身的 --transport/--url/--env 选项，请放在 <name> 之前。",
       ].join("\n"),
@@ -109,22 +107,31 @@ export function createProgram(): Command {
   program
     .command("resume")
     .description("恢复历史会话")
-    .argument("[query]", "会话 ID 或标题前缀")
+    .argument("[query]", "会话编号或标题前缀")
     .option("--last", "恢复当前工作区最近一次会话")
     .option("--all", "跨工作区检索")
-    .action(async (query: string | undefined, options: { last?: boolean; all?: boolean }) => {
-      const { ConfigResolver } = await import("../config/resolver.js");
-      const { startChat } = await import("./chat.js");
-      const resolver = new ConfigResolver();
-      const config = await resolver.resolve({});
+    .option("--fork", "基于目标会话派生新会话，而不是直接恢复原会话")
+    .action(
+      async (
+        query: string | undefined,
+        options: { last?: boolean; all?: boolean; fork?: boolean },
+      ) => {
+        const { ConfigResolver } = await import("../config/resolver.js");
+        const { startChat } = await import("./chat.js");
+        const resolver = new ConfigResolver();
+        const config = await resolver.resolve({});
+        const useSelector = !options.last && !query;
 
-      await startChat(config, {
-        continueLast: false,
-        resumeLast: Boolean(options.last || !query),
-        resumeAll: Boolean(options.all),
-        resumeQuery: query,
-      });
-    });
+        await startChat(config, {
+          continueLast: false,
+          resumeLast: Boolean(options.last),
+          resumeAll: Boolean(options.all),
+          resumeQuery: query,
+          resumePicker: useSelector,
+          resumeFork: Boolean(options.fork),
+        });
+      },
+    );
 
   return program;
 }

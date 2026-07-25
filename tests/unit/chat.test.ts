@@ -622,6 +622,155 @@ describe('startChat', () => {
     logSpy.mockRestore()
   })
 
+  it('shows a lightweight resume selector and restores the chosen session', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({ content: 'Resumed reply', model: 'test' })
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-resume-picker-'))
+    tempDirs.push(tempDir)
+    const { SessionStore } = await import('../../src/session/store.js')
+    const { createSessionState } = await import('../../src/session/runtime.js')
+    const { resolveWorkspace } = await import('../../src/session/workspace.js')
+    const { startChat } = await import('../../src/cli/chat.js')
+    const workspace = await resolveWorkspace(process.cwd())
+    const store = new SessionStore(tempDir)
+
+    const first = createSessionState({
+      sessionId: 'resume-picker-1',
+      kind: 'interactive',
+      mode: 'normal',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    first.messages = [{ role: 'user', content: 'first context' }]
+    first.title = 'first-task'
+    first.updatedAt = '2026-07-25T12:02:00.000Z'
+    first.lastActiveAt = '2026-07-25T12:02:00.000Z'
+    await store.saveSession(first)
+
+    const second = createSessionState({
+      sessionId: 'resume-picker-2',
+      kind: 'interactive',
+      mode: 'plan',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    second.messages = [{ role: 'user', content: 'second context' }]
+    second.title = 'second-task'
+    second.status = 'awaiting_plan_approval'
+    second.updatedAt = '2026-07-25T12:03:00.000Z'
+    second.lastActiveAt = '2026-07-25T12:03:00.000Z'
+    await store.saveSession(second)
+
+    mockRl.question.mockImplementationOnce((_question: string, cb: (answer: string) => void) => {
+      cb('2')
+    })
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat(
+      {
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        sessions: {
+          enabled: true,
+          storePath: tempDir,
+          defaultScope: 'workspace',
+          includePromptSessions: false,
+        },
+      } as any,
+      { resumePicker: true } as any,
+    )
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('second-task'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('状态：等待计划确认'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('模式：规划'))
+
+    await callbacks.line('continue from picker')
+
+    expect(providerMocks.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          { role: 'user', content: 'first context' },
+          { role: 'user', content: 'continue from picker' },
+        ],
+      }),
+    )
+
+    logSpy.mockRestore()
+  })
+
+  it('forks the matched session when resume --fork is requested', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({ content: 'Forked reply', model: 'test' })
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-resume-fork-'))
+    tempDirs.push(tempDir)
+    const { SessionStore } = await import('../../src/session/store.js')
+    const { createSessionState } = await import('../../src/session/runtime.js')
+    const { resolveWorkspace } = await import('../../src/session/workspace.js')
+    const { startChat } = await import('../../src/cli/chat.js')
+    const workspace = await resolveWorkspace(process.cwd())
+    const store = new SessionStore(tempDir)
+    const state = createSessionState({
+      sessionId: 'resume-fork-source',
+      kind: 'interactive',
+      mode: 'normal',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    state.messages = [{ role: 'user', content: 'fork source context' }]
+    state.title = 'fix-auth-timeout'
+    state.updatedAt = '2026-07-25T12:05:00.000Z'
+    state.lastActiveAt = '2026-07-25T12:05:00.000Z'
+    await store.saveSession(state)
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat(
+      {
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        sessions: {
+          enabled: true,
+          storePath: tempDir,
+          defaultScope: 'workspace',
+          includePromptSessions: false,
+        },
+      } as any,
+      { resumeQuery: 'fix-auth', resumeFork: true } as any,
+    )
+
+    const index = JSON.parse(await fs.readFile(path.join(tempDir, 'index.json'), 'utf8'))
+    expect(index).toHaveLength(2)
+    const forked = index.find((session: any) => session.parentSessionId === 'resume-fork-source')
+
+    expect(forked).toMatchObject({
+      parentSessionId: 'resume-fork-source',
+      title: 'fix-auth-timeout',
+    })
+    expect(forked?.id).not.toBe('resume-fork-source')
+
+    await callbacks.line('continue in fork')
+
+    expect(providerMocks.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          { role: 'user', content: 'fork source context' },
+          { role: 'user', content: 'continue in fork' },
+        ],
+      }),
+    )
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('已基于会话派生新分支'))
+
+    logSpy.mockRestore()
+  })
+
   it('processes slash /clear command', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const { startChat } = await import('../../src/cli/chat.js')
@@ -666,9 +815,9 @@ describe('startChat', () => {
     await callbacks.line('fix flaky test')
     await callbacks.line('/session')
 
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Session ID:'))
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Status: idle'))
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Mode: normal'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('会话编号：'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('状态：空闲'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('模式：普通'))
 
     logSpy.mockRestore()
   })
@@ -1337,7 +1486,7 @@ describe('startChat', () => {
       status: 'interrupted',
       messages: [{ role: 'user', content: 'long running task' }],
     })
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('interrupted'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('当前执行已中断'))
 
     logSpy.mockRestore()
   })
@@ -1386,10 +1535,10 @@ describe('startChat', () => {
     )
 
     expect(providerMocks.chat).not.toHaveBeenCalled()
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('interrupted'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('已恢复中断会话'))
 
     await callbacks.line('/session')
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Status: idle'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('状态：空闲'))
 
     await callbacks.line('continue working')
 
