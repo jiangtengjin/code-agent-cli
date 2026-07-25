@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { CostTracker } from "../llm/cost-tracker.js";
-import { createSessionState, deriveSessionTitle } from "./runtime.js";
+import { createSessionState, deriveSessionTitle, forkSessionState } from "./runtime.js";
 import { SessionStore } from "./store.js";
 import type { UsageTracker } from "./usage.js";
 import { resolveWorkspace } from "./workspace.js";
@@ -65,6 +65,76 @@ export class SessionPersistence {
     this.lastPersistedMessageCount = state.messages.length;
     this.lastPersistedPlanState = JSON.stringify(state.pendingPlan ?? null);
     this.lastPersistedStatus = state.status;
+  }
+
+  getCurrentState(): SessionState | undefined {
+    if (!this.session) {
+      return undefined;
+    }
+
+    const messages = [...this.options.getMessages()];
+    const state: SessionState = {
+      ...this.session,
+      mode: this.options.getMode(),
+      messages,
+      pendingPlan: this.options.getPendingPlan(),
+      usage: this.options.usageTracker.snapshot(),
+      cost: this.options.costTracker.snapshot(),
+      status: this.status,
+    };
+    state.title = deriveSessionTitle({ ...state, title: "" });
+    return state;
+  }
+
+  async forkCurrentSession(title?: string): Promise<SessionState | undefined> {
+    if (!this.store) {
+      return undefined;
+    }
+
+    const currentState = this.getCurrentState();
+    if (!currentState) {
+      return undefined;
+    }
+
+    const forked = forkSessionState(currentState, {
+      sessionId: randomUUID(),
+      now: nowIso(),
+      title,
+    });
+
+    await this.store.saveSession(forked);
+    await this.store.appendEvent(forked.sessionId, {
+      type: "fork",
+      createdAt: nowIso(),
+      parentSessionId: currentState.sessionId,
+    });
+    this.hydrate(forked);
+    return forked;
+  }
+
+  async archiveCurrentSession(): Promise<SessionState | undefined> {
+    if (!this.store || !this.session) {
+      return undefined;
+    }
+
+    const archivedAt = nowIso();
+    await this.store.setArchiveState(this.session.sessionId, true, archivedAt);
+    await this.store.appendEvent(this.session.sessionId, {
+      type: "archive",
+      createdAt: archivedAt,
+    });
+
+    const archived = await this.store.loadSession(this.session.sessionId);
+    this.clearActiveSession();
+    return archived;
+  }
+
+  clearActiveSession(): void {
+    this.session = undefined;
+    this.status = "idle";
+    this.lastPersistedMessageCount = 0;
+    this.lastPersistedPlanState = null;
+    this.lastPersistedStatus = undefined;
   }
 
   async updateStatus(status: SessionStatus, reason?: string): Promise<void> {

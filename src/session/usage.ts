@@ -12,11 +12,12 @@ export class UsageTracker {
 
   constructor(initial?: Partial<UsageSnapshot>) {
     this.totals = {
-      promptTokens: initial?.promptTokens ?? 0,
-      completionTokens: initial?.completionTokens ?? 0,
-      totalTokens: initial?.totalTokens ?? 0,
-      calls: initial?.calls ?? 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      calls: 0,
     };
+    this.restore(initial);
   }
 
   record(usage: LLMUsage | undefined): void {
@@ -30,6 +31,17 @@ export class UsageTracker {
 
   snapshot(): UsageSnapshot {
     return { ...this.totals };
+  }
+
+  restore(snapshot?: Partial<UsageSnapshot>): void {
+    this.totals.promptTokens = snapshot?.promptTokens ?? 0;
+    this.totals.completionTokens = snapshot?.completionTokens ?? 0;
+    this.totals.totalTokens = snapshot?.totalTokens ?? 0;
+    this.totals.calls = snapshot?.calls ?? 0;
+  }
+
+  reset(): void {
+    this.restore();
   }
 }
 

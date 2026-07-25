@@ -22,6 +22,7 @@ type FindSessionOptions = {
   workspaceKey?: string;
   kind?: SessionState["kind"];
   includeAllWorkspaces?: boolean;
+  includeArchived?: boolean;
 };
 
 async function ensureDir(dirPath: string): Promise<void> {
@@ -118,6 +119,7 @@ export class SessionStore {
     const sessions = await this.listSessions({
       workspaceKey: options.includeAllWorkspaces ? undefined : options.workspaceKey,
       kind: options.kind,
+      includeArchived: options.includeArchived,
     });
 
     return sessions[0];
@@ -135,7 +137,7 @@ export class SessionStore {
     const sessions = await this.listSessions({
       workspaceKey: options.includeAllWorkspaces ? undefined : options.workspaceKey,
       kind: options.kind,
-      includeArchived: false,
+      includeArchived: options.includeArchived,
     });
 
     const exactMatch = sessions.find(

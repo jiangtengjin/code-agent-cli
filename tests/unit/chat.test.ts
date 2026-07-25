@@ -642,6 +642,163 @@ describe('startChat', () => {
     logSpy.mockRestore()
   })
 
+  it('shows current session details with /session', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-info-'))
+    tempDirs.push(tempDir)
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      sessions: {
+        enabled: true,
+        storePath: tempDir,
+        defaultScope: 'workspace',
+        includePromptSessions: false,
+      },
+    } as any)
+
+    await callbacks.line('fix flaky test')
+    await callbacks.line('/session')
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Session ID:'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Status: idle'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Mode: normal'))
+
+    logSpy.mockRestore()
+  })
+
+  it('archives the current session and starts a fresh context on the next input', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat
+      .mockResolvedValueOnce({ content: 'First reply', model: 'test' })
+      .mockResolvedValueOnce({ content: 'Second reply', model: 'test' })
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-archive-'))
+    tempDirs.push(tempDir)
+    const { startChat } = await import('../../src/cli/chat.js')
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      sessions: {
+        enabled: true,
+        storePath: tempDir,
+        defaultScope: 'workspace',
+        includePromptSessions: false,
+      },
+    } as any)
+
+    await callbacks.line('first task')
+    await callbacks.line('/archive')
+    await callbacks.line('second task')
+
+    const index = JSON.parse(await fs.readFile(path.join(tempDir, 'index.json'), 'utf8'))
+    expect(index).toHaveLength(2)
+    expect(index.some((session: any) => session.status === 'archived')).toBe(true)
+    expect(providerMocks.chat.mock.calls[1][0].messages).toEqual([{ role: 'user', content: 'second task' }])
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('已归档当前会话'))
+
+    logSpy.mockRestore()
+  })
+
+  it('restores a saved session from /resume <query>', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({ content: 'Resumed reply', model: 'test' })
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-slash-resume-'))
+    tempDirs.push(tempDir)
+    const { SessionStore } = await import('../../src/session/store.js')
+    const { createSessionState } = await import('../../src/session/runtime.js')
+    const { resolveWorkspace } = await import('../../src/session/workspace.js')
+    const { startChat } = await import('../../src/cli/chat.js')
+    const workspace = await resolveWorkspace(process.cwd())
+    const store = new SessionStore(tempDir)
+    const state = createSessionState({
+      sessionId: 'slash-resume-123',
+      kind: 'interactive',
+      mode: 'normal',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    state.messages = [{ role: 'user', content: 'previous context' }]
+    state.title = 'fix-auth-timeout'
+    state.updatedAt = '2026-07-25T12:05:00.000Z'
+    state.lastActiveAt = '2026-07-25T12:05:00.000Z'
+    await store.saveSession(state)
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      sessions: {
+        enabled: true,
+        storePath: tempDir,
+        defaultScope: 'workspace',
+        includePromptSessions: false,
+      },
+    } as any)
+
+    await callbacks.line('/resume fix-auth')
+    await callbacks.line('next step')
+
+    expect(providerMocks.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          { role: 'user', content: 'previous context' },
+          { role: 'user', content: 'next step' },
+        ],
+      }),
+    )
+
+    logSpy.mockRestore()
+  })
+
+  it('forks the current session into a new branch', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({ content: 'First reply', model: 'test' })
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-fork-'))
+    tempDirs.push(tempDir)
+    const { startChat } = await import('../../src/cli/chat.js')
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      sessions: {
+        enabled: true,
+        storePath: tempDir,
+        defaultScope: 'workspace',
+        includePromptSessions: false,
+      },
+    } as any)
+
+    await callbacks.line('first task')
+    await callbacks.line('/fork branch-one')
+
+    const index = JSON.parse(await fs.readFile(path.join(tempDir, 'index.json'), 'utf8'))
+    expect(index).toHaveLength(2)
+    expect(index[0]).toMatchObject({
+      title: 'branch-one',
+      parentSessionId: index[1].id,
+    })
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('已创建会话分支'))
+
+    logSpy.mockRestore()
+  })
+
   it('processes slash command aliases', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const { startChat } = await import('../../src/cli/chat.js')

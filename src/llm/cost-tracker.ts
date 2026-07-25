@@ -46,23 +46,12 @@ export class CostTracker {
     initialSnapshot?: CostSnapshot,
   ) {
     this.pricing = { ...DEFAULT_PRICING, ...(options.pricing ?? {}) };
-    this.totals = initialSnapshot
-      ? {
-          currency: initialSnapshot.currency,
-          totalCost: initialSnapshot.totalCost,
-          byModel: Object.fromEntries(
-            Object.entries(initialSnapshot.byModel).map(([modelName, usage]) => [
-              modelName,
-              { ...usage },
-            ]),
-          ),
-        }
-      : {
-          currency: "¥",
-          totalCost: 0,
-          byModel: {},
-        };
-    this.warned = this.hasReachedWarningThreshold();
+    this.totals = {
+      currency: "¥",
+      totalCost: 0,
+      byModel: {},
+    };
+    this.restore(initialSnapshot);
   }
 
   record(modelName: string, usage: LLMUsage | undefined): string | undefined {
@@ -110,6 +99,27 @@ export class CostTracker {
       totalCost: this.totals.totalCost,
       byModel: { ...this.totals.byModel },
     };
+  }
+
+  restore(snapshot?: CostSnapshot): void {
+    if (!snapshot) {
+      this.reset();
+      return;
+    }
+
+    this.totals.currency = snapshot.currency;
+    this.totals.totalCost = snapshot.totalCost;
+    this.totals.byModel = Object.fromEntries(
+      Object.entries(snapshot.byModel).map(([modelName, usage]) => [modelName, { ...usage }]),
+    );
+    this.warned = this.hasReachedWarningThreshold();
+  }
+
+  reset(): void {
+    this.totals.currency = "¥";
+    this.totals.totalCost = 0;
+    this.totals.byModel = {};
+    this.warned = false;
   }
 
   private hasReachedWarningThreshold(): boolean {

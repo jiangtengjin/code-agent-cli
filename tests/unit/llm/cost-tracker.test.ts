@@ -150,4 +150,46 @@ describe("CostTracker", () => {
       cost: 0.008,
     });
   });
+
+  it("can restore and reset totals after initialization", () => {
+    const tracker = new CostTracker({
+      pricing: {
+        "deepseek-coder": {
+          inputPerMillion: 2,
+          outputPerMillion: 4,
+          currency: "¥",
+        },
+      },
+    });
+
+    tracker.record("deepseek-coder", {
+      promptTokens: 1000,
+      completionTokens: 500,
+      totalTokens: 1500,
+    });
+    tracker.restore({
+      currency: "¥",
+      totalCost: 0.004,
+      byModel: {
+        "deepseek-coder": {
+          promptTokens: 1000,
+          completionTokens: 500,
+          totalTokens: 1500,
+          cost: 0.004,
+        },
+      },
+    });
+
+    expect(tracker.snapshot()).toMatchObject({
+      currency: "¥",
+      totalCost: 0.004,
+    });
+
+    tracker.reset();
+    expect(tracker.snapshot()).toEqual({
+      currency: "¥",
+      totalCost: 0,
+      byModel: {},
+    });
+  });
 });

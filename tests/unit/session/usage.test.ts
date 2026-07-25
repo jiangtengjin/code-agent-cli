@@ -75,4 +75,30 @@ describe("UsageTracker", () => {
       calls: 3,
     });
   });
+
+  it("can restore and reset totals after initialization", () => {
+    const tracker = new UsageTracker();
+
+    tracker.record({ promptTokens: 9, completionTokens: 1, totalTokens: 10 });
+    tracker.restore({
+      promptTokens: 4,
+      completionTokens: 3,
+      totalTokens: 7,
+      calls: 2,
+    });
+    expect(tracker.snapshot()).toEqual({
+      promptTokens: 4,
+      completionTokens: 3,
+      totalTokens: 7,
+      calls: 2,
+    });
+
+    tracker.reset();
+    expect(tracker.snapshot()).toEqual({
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      calls: 0,
+    });
+  });
 });

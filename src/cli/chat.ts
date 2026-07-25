@@ -8,6 +8,7 @@ import { executeApprovedPlan, formatPlanState } from "../modes/plan.js";
 import { ModeRouter } from "../modes/router.js";
 import { createTaskTiming, formatTaskTiming } from "../session/execution.js";
 import { SessionPersistence } from "../session/persistence.js";
+import { createSessionSummary } from "../session/runtime.js";
 import { SessionStore } from "../session/store.js";
 import { UsageTracker, formatUsageSnapshot } from "../session/usage.js";
 import { resolveWorkspace } from "../session/workspace.js";
@@ -138,6 +139,31 @@ const COMMANDS: SlashCommand[] = [
     desc: "清空对话历史",
     aliases: ["cls"],
     keywords: ["清空", "清除", "历史", "重置"],
+  },
+  {
+    name: "session",
+    desc: "查看当前会话摘要",
+    keywords: ["会话", "摘要", "状态", "session"],
+  },
+  {
+    name: "resume",
+    desc: "恢复历史会话或查看会话列表",
+    keywords: ["恢复", "历史", "会话", "resume"],
+  },
+  {
+    name: "fork",
+    desc: "基于当前会话创建分支",
+    keywords: ["分支", "fork", "派生", "复制会话"],
+  },
+  {
+    name: "archive",
+    desc: "归档当前会话",
+    keywords: ["归档", "隐藏会话", "archive"],
+  },
+  {
+    name: "unarchive",
+    desc: "取消归档目标会话",
+    keywords: ["取消归档", "恢复归档", "unarchive"],
   },
   {
     name: "usage",
@@ -344,6 +370,11 @@ async function handleSlashCommand(
     setMode: (m: ChatMode) => void;
     clearPendingPlan?: () => void;
     onSessionUpdated?: (reason?: string) => Promise<void> | void;
+    showSession?: () => Promise<void> | void;
+    resumeSession?: (query?: string) => Promise<void> | void;
+    forkSession?: (name?: string) => Promise<void> | void;
+    archiveSession?: () => Promise<void> | void;
+    unarchiveSession?: (query: string) => Promise<void> | void;
     onExit?: (code: number) => Promise<void> | void;
   },
 ): Promise<"continue" | "exit"> {
@@ -358,6 +389,11 @@ async function handleSlashCommand(
 ${chalk.bold("可用命令:")}
   ${chalk.yellow("/model")}          查看当前模型
   ${chalk.yellow("/mode <mode>")}    切换模式 (normal/auto/plan/edit)
+  ${chalk.yellow("/session")}        查看当前会话摘要
+  ${chalk.yellow("/resume [query]")} 恢复历史会话或查看列表
+  ${chalk.yellow("/fork [name]")}    基于当前会话创建分支
+  ${chalk.yellow("/archive")}        归档当前会话
+  ${chalk.yellow("/unarchive <q>")}  取消归档目标会话
   ${chalk.yellow("/clear")}          清空对话历史
   ${chalk.yellow("/usage")}         Show token usage
   ${chalk.yellow("/help")}           显示此帮助
@@ -384,6 +420,50 @@ ${chalk.bold("可用命令:")}
       ctx.clearPendingPlan?.();
       await ctx.onSessionUpdated?.("clear");
       console.log(chalk.green("对话历史已清空"));
+      break;
+
+    case "session":
+      if (ctx.showSession) {
+        await ctx.showSession();
+      } else {
+        console.log(chalk.yellow("当前没有会话信息"));
+      }
+      break;
+
+    case "resume":
+      if (ctx.resumeSession) {
+        await ctx.resumeSession(args.join(" ").trim() || undefined);
+      } else {
+        console.log(chalk.yellow("当前不支持恢复会话"));
+      }
+      break;
+
+    case "fork":
+      if (ctx.forkSession) {
+        await ctx.forkSession(args.join(" ").trim() || undefined);
+      } else {
+        console.log(chalk.yellow("当前不支持创建会话分支"));
+      }
+      break;
+
+    case "archive":
+      if (ctx.archiveSession) {
+        await ctx.archiveSession();
+      } else {
+        console.log(chalk.yellow("当前没有可归档的会话"));
+      }
+      break;
+
+    case "unarchive":
+      if (!args.length) {
+        console.log(chalk.yellow("请提供要取消归档的会话 ID 或标题前缀"));
+        break;
+      }
+      if (ctx.unarchiveSession) {
+        await ctx.unarchiveSession(args.join(" ").trim());
+      } else {
+        console.log(chalk.yellow("当前不支持取消归档会话"));
+      }
       break;
 
     case "usage":
@@ -676,6 +756,10 @@ export async function startChat(
   const modeRouter = new ModeRouter();
   let mode: ChatMode = initialSession?.mode ?? ((config.mode as ChatMode) ?? "normal");
   let pendingPlan: PlanState | undefined = initialSession?.pendingPlan;
+  const sessionStore =
+    config.sessions?.enabled !== false && config.sessions?.storePath
+      ? new SessionStore(config.sessions.storePath)
+      : undefined;
   const persistence = new SessionPersistence({
     enabled: config.sessions?.enabled !== false,
     storePath: config.sessions?.storePath,
@@ -704,6 +788,135 @@ export async function startChat(
   let exitRequested = false;
   let exitCode = 0;
   let exitHandled = false;
+
+  function resetRuntimeState(): void {
+    messages.length = 0;
+    pendingPlan = undefined;
+    usageTracker.reset();
+    costTracker.reset();
+  }
+
+  function applySessionState(state: SessionState): void {
+    messages.splice(0, messages.length, ...state.messages);
+    mode = state.mode;
+    pendingPlan = state.pendingPlan;
+    usageTracker.restore(state.usage);
+    costTracker.restore(state.cost);
+    persistence.hydrate(state);
+  }
+
+  function printSessionSummary(): void {
+    const state = persistence.getCurrentState();
+    if (!state) {
+      console.log(chalk.yellow("当前还没有活跃会话"));
+      return;
+    }
+
+    const summary = createSessionSummary(state);
+    console.log(
+      [
+        `Session ID: ${summary.id}`,
+        `Title: ${summary.title}`,
+        `Status: ${summary.status}`,
+        `Mode: ${summary.mode}`,
+        `Workspace: ${summary.workspacePath}`,
+        `Turns: ${summary.turnCount}`,
+      ].join("\n"),
+    );
+  }
+
+  async function resumeSessionFromSlash(query?: string): Promise<void> {
+    if (!sessionStore) {
+      console.log(chalk.yellow("会话持久化未启用"));
+      return;
+    }
+
+    const workspace = await resolveWorkspace(process.cwd());
+    if (!query) {
+      const sessions = await sessionStore.listSessions({
+        workspaceKey: workspace.key,
+        kind: "interactive",
+      });
+
+      if (sessions.length === 0) {
+        console.log(chalk.yellow("当前工作区没有可恢复的会话"));
+        return;
+      }
+
+      const rows = sessions
+        .slice(0, 10)
+        .map((session, index) => `${index + 1}. ${session.id}  ${session.title}`);
+      console.log(rows.join("\n"));
+      return;
+    }
+
+    const summary = await sessionStore.findSessionByQuery(query, {
+      workspaceKey: workspace.key,
+      kind: "interactive",
+    });
+
+    if (!summary) {
+      console.log(chalk.yellow(`未找到会话: ${query}`));
+      return;
+    }
+
+    const state = await sessionStore.loadSession(summary.id);
+    if (!state) {
+      console.log(chalk.yellow(`无法加载会话: ${summary.id}`));
+      return;
+    }
+
+    applySessionState(state);
+    console.log(chalk.green(`已恢复会话: ${summary.title}`));
+  }
+
+  async function archiveCurrentSession(): Promise<void> {
+    const archived = await persistence.archiveCurrentSession();
+    if (!archived) {
+      console.log(chalk.yellow("当前没有可归档的会话"));
+      return;
+    }
+
+    resetRuntimeState();
+    console.log(chalk.green(`已归档当前会话: ${archived.title}`));
+  }
+
+  async function forkCurrentSession(name?: string): Promise<void> {
+    const forked = await persistence.forkCurrentSession(name);
+    if (!forked) {
+      console.log(chalk.yellow("当前没有可分叉的会话"));
+      return;
+    }
+
+    messages.splice(0, messages.length, ...forked.messages);
+    pendingPlan = forked.pendingPlan;
+    usageTracker.restore(forked.usage);
+    costTracker.restore(forked.cost);
+    mode = forked.mode;
+    console.log(chalk.green(`已创建会话分支: ${forked.title}`));
+  }
+
+  async function unarchiveSession(query: string): Promise<void> {
+    if (!sessionStore) {
+      console.log(chalk.yellow("会话持久化未启用"));
+      return;
+    }
+
+    const workspace = await resolveWorkspace(process.cwd());
+    const summary = await sessionStore.findSessionByQuery(query, {
+      workspaceKey: workspace.key,
+      kind: "interactive",
+      includeArchived: true,
+    });
+
+    if (!summary || summary.status !== "archived") {
+      console.log(chalk.yellow(`未找到已归档会话: ${query}`));
+      return;
+    }
+
+    await sessionStore.setArchiveState(summary.id, false, new Date().toISOString());
+    console.log(chalk.green(`已取消归档: ${summary.title}`));
+  }
 
   function logCleanupError(action: string, error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
@@ -989,6 +1202,11 @@ export async function startChat(
             pendingPlan = undefined;
           },
           onSessionUpdated: (reason) => persistence.handleSessionUpdated(reason),
+          showSession: () => printSessionSummary(),
+          resumeSession: (query) => resumeSessionFromSlash(query),
+          forkSession: (name) => forkCurrentSession(name),
+          archiveSession: () => archiveCurrentSession(),
+          unarchiveSession: (query) => unarchiveSession(query),
           onExit: (code) => shutdown({ exit: true, exitCode: code }),
         });
         if (commandResult === "exit") {
