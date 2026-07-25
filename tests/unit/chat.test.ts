@@ -191,11 +191,20 @@ describe('task timing', () => {
 })
 
 describe('runPrompt', () => {
+  let tempDirs: string[] = []
+
   beforeEach(() => {
     vi.clearAllMocks()
     mcpManagerMocks.instances.length = 0
     mcpManagerMocks.setSummary({ servers: 0, tools: 0 })
     providerMocks.chat.mockResolvedValue({ content: 'single reply', model: 'test' })
+    tempDirs = []
+  })
+
+  afterEach(async () => {
+    for (const tempDir of tempDirs) {
+      await fs.rm(tempDir, { recursive: true, force: true })
+    }
   })
 
   it('sends the prompt as a user message and prints the response', async () => {
@@ -436,6 +445,42 @@ describe('startChat', () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('/model'))
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('/clear'))
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('/exit'))
+
+    logSpy.mockRestore()
+  })
+
+  it('creates a persisted interactive session only after the first non-slash input', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-chat-'))
+    tempDirs.push(tempDir)
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      sessions: {
+        enabled: true,
+        storePath: tempDir,
+        defaultScope: 'workspace',
+        includePromptSessions: false,
+      },
+    } as any)
+
+    await callbacks.line('/help')
+    await expect(fs.access(path.join(tempDir, 'index.json'))).rejects.toThrow()
+
+    await callbacks.line('fix flaky test')
+
+    const index = JSON.parse(await fs.readFile(path.join(tempDir, 'index.json'), 'utf8'))
+    expect(index).toHaveLength(1)
+    expect(index[0]).toMatchObject({
+      kind: 'interactive',
+      status: 'idle',
+    })
 
     logSpy.mockRestore()
   })
@@ -916,6 +961,35 @@ describe('startChat', () => {
     expect(providerMocks.chat).toHaveBeenCalledTimes(2)
     expect(providerMocks.chat.mock.calls[1][0].messages).toEqual([{ role: 'user', content: 'y' }])
     expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Plan completed'))
+
+    logSpy.mockRestore()
+  })
+
+  it('persists a prompt session when session storage is enabled', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-prompt-'))
+    tempDirs.push(tempDir)
+    const { runPrompt } = await import('../../src/cli/chat.js')
+
+    await runPrompt(
+      {
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        sessions: {
+          enabled: true,
+          storePath: tempDir,
+          defaultScope: 'workspace',
+          includePromptSessions: false,
+        },
+      } as any,
+      'hello from prompt',
+    )
+
+    const index = JSON.parse(await fs.readFile(path.join(tempDir, 'index.json'), 'utf8'))
+    expect(index).toHaveLength(1)
+    expect(index[0]).toMatchObject({
+      kind: 'prompt',
+      status: 'idle',
+    })
 
     logSpy.mockRestore()
   })

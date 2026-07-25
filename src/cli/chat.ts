@@ -7,6 +7,7 @@ import { createProviderFromConfig } from "../llm/registry.js";
 import { executeApprovedPlan, formatPlanState } from "../modes/plan.js";
 import { ModeRouter } from "../modes/router.js";
 import { createTaskTiming, formatTaskTiming } from "../session/execution.js";
+import { SessionPersistence } from "../session/persistence.js";
 import { UsageTracker, formatUsageSnapshot } from "../session/usage.js";
 import { createDefaultToolRegistry } from "../tools/built-in/index.js";
 import { MCPServerManager, type MCPSummary } from "../tools/mcp/manager.js";
@@ -339,6 +340,7 @@ async function handleSlashCommand(
     costTracker: CostTracker;
     setMode: (m: ChatMode) => void;
     clearPendingPlan?: () => void;
+    onSessionUpdated?: (reason?: string) => Promise<void> | void;
     onExit?: (code: number) => Promise<void> | void;
   },
 ): Promise<"continue" | "exit"> {
@@ -367,6 +369,7 @@ ${chalk.bold("可用命令:")}
     case "mode":
       if (args[0] && ["normal", "auto", "plan", "edit"].includes(args[0])) {
         ctx.setMode(args[0] as ChatMode);
+        await ctx.onSessionUpdated?.("mode");
         console.log(chalk.green(`切换到模式: ${args[0]}`));
       } else {
         console.log(chalk.yellow(`当前模式: ${ctx.mode}`));
@@ -376,6 +379,7 @@ ${chalk.bold("可用命令:")}
     case "clear":
       ctx.messages.length = 0;
       ctx.clearPendingPlan?.();
+      await ctx.onSessionUpdated?.("clear");
       console.log(chalk.green("对话历史已清空"));
       break;
 
@@ -521,11 +525,26 @@ export async function runPrompt(config: Config, prompt: string): Promise<void> {
   const usageTracker = new UsageTracker();
   const costTracker = new CostTracker(config.costGuard);
   const modeRouter = new ModeRouter();
-  const handler = modeRouter.getHandler(config.mode);
+  let mode: ChatMode = (config.mode as ChatMode) ?? "normal";
+  let pendingPlan: PlanState | undefined;
+  const handler = modeRouter.getHandler(mode);
+  const persistence = new SessionPersistence({
+    enabled: config.sessions?.enabled !== false,
+    storePath: config.sessions?.storePath,
+    kind: "prompt",
+    usageTracker,
+    costTracker,
+    getMode: () => mode,
+    getMessages: () => messages,
+    getPendingPlan: () => pendingPlan,
+  });
 
   try {
+    await persistence.initialize();
     await mcpManager.startAll();
-    const modeResult = await handler.run(prompt, {
+    await persistence.updateStatus("running");
+
+    const runContext = {
       provider,
       toolRegistry,
       messages,
@@ -535,54 +554,50 @@ export async function runPrompt(config: Config, prompt: string): Promise<void> {
       timing,
       skipConfirm: Boolean(config.yolo),
       confirmToolCall: async () => false,
+      onMessagesChanged: (nextMessages: LLMMessage[]) => persistence.handleMessagesChanged(nextMessages),
+      onPlanStateChanged: (plan?: PlanState) => persistence.handlePlanStateChanged(plan),
+      onStatusChanged: (status: "idle" | "running" | "awaiting_plan_approval" | "interrupted" | "archived", reason?: string) =>
+        persistence.updateStatus(status, reason),
       output: {
-        onAssistantMessage: (content) => {
+        onAssistantMessage: (content: string) => {
           console.log(content);
         },
         onTokenUsage: printTokenUsage,
         onToolStart: printToolStart,
         onToolResult: printToolResult,
-        onWarning: (message) => {
+        onWarning: (message: string) => {
           console.log(chalk.yellow(`\n${message}`));
         },
         onPlanState: printPlanState,
       },
-    });
+    };
+
+    const modeResult = await handler.run(prompt, runContext);
 
     if (modeResult.planState) {
+      pendingPlan = modeResult.planState;
       if (config.yolo) {
+        await persistence.updateStatus("running");
         await executeApprovedPlan(
           modeResult.planState,
           {
-            provider,
-            toolRegistry,
-            messages,
-            config,
-            usageTracker,
-            costTracker,
-            timing,
+            ...runContext,
             skipConfirm: true,
             confirmToolCall: async () => true,
-            output: {
-              onAssistantMessage: (content) => {
-                console.log(content);
-              },
-              onTokenUsage: printTokenUsage,
-              onToolStart: printToolStart,
-              onToolResult: printToolResult,
-              onWarning: (message) => {
-                console.log(chalk.yellow(`\n${message}`));
-              },
-              onPlanState: printPlanState,
-            },
           },
           handler.maxIterations,
         );
+        pendingPlan = undefined;
+        await persistence.handlePlanStateChanged(undefined);
+        await persistence.updateStatus("idle");
       } else {
+        await persistence.updateStatus("awaiting_plan_approval");
         console.log(
           chalk.yellow("Plan generated. Re-run with --yolo or use interactive chat to execute it."),
         );
       }
+    } else {
+      await persistence.updateStatus("idle");
     }
   } catch (error) {
     displayError(error);
@@ -616,6 +631,16 @@ export async function startChat(config: Config): Promise<void> {
   const modeRouter = new ModeRouter();
   let mode: ChatMode = (config.mode as ChatMode) ?? "normal";
   let pendingPlan: PlanState | undefined;
+  const persistence = new SessionPersistence({
+    enabled: config.sessions?.enabled !== false,
+    storePath: config.sessions?.storePath,
+    kind: "interactive",
+    usageTracker,
+    costTracker,
+    getMode: () => mode,
+    getMessages: () => messages,
+    getPendingPlan: () => pendingPlan,
+  });
   type KeypressListener = (str: string, key: { name?: string; ctrl?: boolean }) => void;
   const cleanupHooks: {
     clearSuggestionBlock?: () => void;
@@ -722,6 +747,7 @@ export async function startChat(config: Config): Promise<void> {
     }
   }
 
+  await persistence.initialize();
   await mcpManager.startAll();
   await runSetup(() => displayWelcome(config, provider, mcpManager.getSummary()));
 
@@ -914,6 +940,7 @@ export async function startChat(config: Config): Promise<void> {
           clearPendingPlan: () => {
             pendingPlan = undefined;
           },
+          onSessionUpdated: (reason) => persistence.handleSessionUpdated(reason),
           onExit: (code) => shutdown({ exit: true, exitCode: code }),
         });
         if (commandResult === "exit") {
@@ -926,6 +953,7 @@ export async function startChat(config: Config): Promise<void> {
       const timing = createTaskTiming();
       const spinner = ora({ text: "AI thinking...", color: "cyan" }).start();
       const handler = modeRouter.getHandler(mode);
+      await persistence.updateStatus("running");
       const runContext = {
         provider,
         toolRegistry,
@@ -936,6 +964,10 @@ export async function startChat(config: Config): Promise<void> {
         timing,
         skipConfirm: Boolean(config.yolo),
         confirmToolCall: (toolCall: LLMToolCall) => userConfirm(toolCall, rl),
+        onMessagesChanged: (nextMessages: LLMMessage[]) => persistence.handleMessagesChanged(nextMessages),
+        onPlanStateChanged: (plan?: PlanState) => persistence.handlePlanStateChanged(plan),
+        onStatusChanged: (status: "idle" | "running" | "awaiting_plan_approval" | "interrupted" | "archived", reason?: string) =>
+          persistence.updateStatus(status, reason),
         output: {
           onIteration: (iteration: number) => {
             if (iteration > 1) {
@@ -976,10 +1008,14 @@ export async function startChat(config: Config): Promise<void> {
         if (mode === "plan" && pendingPlan) {
           if (isPlanApprovalInput(trimmed)) {
             const approvedPlan = pendingPlan;
-            pendingPlan = undefined;
             await executeApprovedPlan(approvedPlan, runContext, handler.maxIterations);
+            pendingPlan = undefined;
+            await persistence.handlePlanStateChanged(undefined);
+            await persistence.updateStatus("idle");
           } else if (isPlanRejectInput(trimmed)) {
             pendingPlan = undefined;
+            await persistence.handlePlanStateChanged(undefined);
+            await persistence.updateStatus("idle");
             spinner.stop();
             console.log(chalk.yellow("已取消当前计划"));
           } else {
@@ -988,12 +1024,15 @@ export async function startChat(config: Config): Promise<void> {
               runContext,
             );
             pendingPlan = result.planState;
+            await persistence.updateStatus("awaiting_plan_approval");
           }
         } else {
           const result = await handler.run(trimmed, runContext);
           pendingPlan = result.planState;
+          await persistence.updateStatus(result.planState ? "awaiting_plan_approval" : "idle");
         }
       } catch (error) {
+        await persistence.updateStatus("idle");
         spinner.stop();
         displayError(error);
       } finally {

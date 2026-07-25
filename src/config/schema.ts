@@ -42,6 +42,13 @@ export const CostGuardConfigSchema = z.object({
   warnAtPercent: z.number().min(1, "告警阈值至少为 1").max(100, "告警阈值不能超过 100").optional(),
 });
 
+export const SessionsConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  storePath: z.string().min(1, "会话存储目录不能为空").optional(),
+  defaultScope: z.enum(["workspace"]).optional(),
+  includePromptSessions: z.boolean().optional(),
+});
+
 export const ConfigSchema = z.object({
   $schema: z.string().optional(),
   model: LLMConfigSchema.optional(),
@@ -52,5 +59,6 @@ export const ConfigSchema = z.object({
   rag: RAGConfigSchema.optional(),
   terminal: TerminalConfigSchema.optional(),
   costGuard: CostGuardConfigSchema.optional(),
+  sessions: SessionsConfigSchema.optional(),
   systemPrompt: z.string().optional(),
 });

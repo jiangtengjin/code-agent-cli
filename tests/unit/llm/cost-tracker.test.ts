@@ -107,4 +107,47 @@ describe("CostTracker", () => {
     expect(summary).toContain("deepseek-coder");
     expect(summary).toContain("¥0.0040");
   });
+
+  it("restores persisted totals before tracking new usage", () => {
+    const tracker = new CostTracker(
+      {
+        pricing: {
+          "deepseek-coder": {
+            inputPerMillion: 2,
+            outputPerMillion: 4,
+            currency: "¥",
+          },
+        },
+      },
+      {
+        currency: "¥",
+        totalCost: 0.004,
+        byModel: {
+          "deepseek-coder": {
+            promptTokens: 1000,
+            completionTokens: 500,
+            totalTokens: 1500,
+            cost: 0.004,
+          },
+        },
+      },
+    );
+
+    tracker.record("deepseek-coder", {
+      promptTokens: 1000,
+      completionTokens: 500,
+      totalTokens: 1500,
+    });
+
+    expect(tracker.snapshot()).toMatchObject({
+      currency: "¥",
+      totalCost: 0.008,
+    });
+    expect(tracker.snapshot().byModel["deepseek-coder"]).toMatchObject({
+      promptTokens: 2000,
+      completionTokens: 1000,
+      totalTokens: 3000,
+      cost: 0.008,
+    });
+  });
 });

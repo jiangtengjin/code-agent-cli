@@ -38,15 +38,31 @@ const DEFAULT_PRICING: Record<string, ModelPricing> = {
 
 export class CostTracker {
   private readonly pricing: Record<string, ModelPricing>;
-  private readonly totals: CostSnapshot = {
-    currency: "¥",
-    totalCost: 0,
-    byModel: {},
-  };
+  private readonly totals: CostSnapshot;
   private warned = false;
 
-  constructor(private readonly options: CostTrackerOptions = {}) {
+  constructor(
+    private readonly options: CostTrackerOptions = {},
+    initialSnapshot?: CostSnapshot,
+  ) {
     this.pricing = { ...DEFAULT_PRICING, ...(options.pricing ?? {}) };
+    this.totals = initialSnapshot
+      ? {
+          currency: initialSnapshot.currency,
+          totalCost: initialSnapshot.totalCost,
+          byModel: Object.fromEntries(
+            Object.entries(initialSnapshot.byModel).map(([modelName, usage]) => [
+              modelName,
+              { ...usage },
+            ]),
+          ),
+        }
+      : {
+          currency: "¥",
+          totalCost: 0,
+          byModel: {},
+        };
+    this.warned = this.hasReachedWarningThreshold();
   }
 
   record(modelName: string, usage: LLMUsage | undefined): string | undefined {
@@ -94,6 +110,17 @@ export class CostTracker {
       totalCost: this.totals.totalCost,
       byModel: { ...this.totals.byModel },
     };
+  }
+
+  private hasReachedWarningThreshold(): boolean {
+    if (!this.options.monthlyBudget || !this.options.warnAtPercent) {
+      return false;
+    }
+
+    return (
+      this.totals.totalCost >=
+      this.options.monthlyBudget * (this.options.warnAtPercent / 100)
+    );
   }
 }
 

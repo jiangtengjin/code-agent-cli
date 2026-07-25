@@ -83,6 +83,30 @@ describe("PlanModeHandler", () => {
     });
   });
 
+  it("notifies persistence hooks for plan messages and plan state changes", async () => {
+    const { context } = createContext([
+      {
+        content: JSON.stringify({
+          summary: "Plan summary",
+          steps: [{ title: "Inspect auth", prompt: "inspect auth flow" }],
+        }),
+        model: "test",
+      },
+      { content: "Step completed", model: "test" },
+    ]);
+    const onMessagesChanged = vi.fn();
+    const onPlanStateChanged = vi.fn();
+    context.onMessagesChanged = onMessagesChanged;
+    context.onPlanStateChanged = onPlanStateChanged;
+
+    const result = await new PlanModeHandler().run("add jwt auth", context);
+    await executeApprovedPlan(result.planState!, context, 10);
+
+    expect(onMessagesChanged).toHaveBeenCalled();
+    expect(onPlanStateChanged).toHaveBeenCalledWith(result.planState);
+    expect(onPlanStateChanged.mock.calls.at(-1)?.[0]).toBeUndefined();
+  });
+
   it("accepts jsonc-style plan output wrapped in prose", async () => {
     const { context, output } = createContext([
       {

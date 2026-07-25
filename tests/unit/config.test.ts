@@ -59,6 +59,12 @@ describe("ConfigSchema 验证", () => {
         maxResults: 8,
         chunkSize: 1200,
       },
+      sessions: {
+        enabled: true,
+        storePath: "D:/tmp/code-agent/sessions",
+        defaultScope: "workspace",
+        includePromptSessions: false,
+      },
     });
 
     expect(result.success).toBe(true);
@@ -144,6 +150,50 @@ describe("ConfigResolver 配置合并", () => {
     const resolver = new ConfigResolver();
     const config = await resolver.resolve({ yolo: true });
     expect(config.yolo).toBe(true);
+  });
+
+  it("applies default session settings when none are configured", async () => {
+    const resolver = new ConfigResolver();
+    const config = await resolver.resolve({});
+
+    expect(config.sessions).toMatchObject({
+      enabled: true,
+      defaultScope: "workspace",
+      includePromptSessions: false,
+    });
+    expect(config.sessions?.storePath).toBeTruthy();
+  });
+
+  it("preserves explicit session settings from the merged config", async () => {
+    const previousEnv = {
+      CODE_AGENT_PROVIDER: process.env.CODE_AGENT_PROVIDER,
+      CODE_AGENT_MODEL: process.env.CODE_AGENT_MODEL,
+      CODE_AGENT_API_KEY: process.env.CODE_AGENT_API_KEY,
+      CODE_AGENT_BASE_URL: process.env.CODE_AGENT_BASE_URL,
+    };
+    delete process.env.CODE_AGENT_PROVIDER;
+    delete process.env.CODE_AGENT_MODEL;
+    delete process.env.CODE_AGENT_API_KEY;
+    delete process.env.CODE_AGENT_BASE_URL;
+
+    try {
+      const resolver = new ConfigResolver();
+      const config = await resolver.resolve({});
+
+      expect(config.sessions).toMatchObject({
+        enabled: true,
+        defaultScope: "workspace",
+        includePromptSessions: false,
+      });
+    } finally {
+      for (const [key, value] of Object.entries(previousEnv)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    }
   });
 });
 

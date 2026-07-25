@@ -64,6 +64,18 @@ export interface CostGuardConfig {
   warnAtPercent?: number;
 }
 
+/** 会话持久化配置 */
+export interface SessionsConfig {
+  /** 是否启用本地会话持久化 */
+  enabled?: boolean;
+  /** 会话存储目录 */
+  storePath?: string;
+  /** 恢复默认作用域 */
+  defaultScope?: "workspace";
+  /** 是否默认将非交互 prompt 会话纳入恢复列表 */
+  includePromptSessions?: boolean;
+}
+
 /** 根配置对象 */
 export interface Config {
   /** JSON Schema 地址，用于编辑器智能提示 */
@@ -84,6 +96,8 @@ export interface Config {
   terminal?: TerminalConfig;
   /** 费用守卫配置 */
   costGuard?: CostGuardConfig;
+  /** 会话持久化配置 */
+  sessions?: SessionsConfig;
   /** 自定义系统提示词 */
   systemPrompt?: string;
 }

@@ -80,6 +80,30 @@ describe("mode execution loop", () => {
     });
   });
 
+  it("notifies message persistence hooks whenever the transcript changes", async () => {
+    const onMessagesChanged = vi.fn();
+    const { context } = createContext([
+      {
+        content: "",
+        model: "test",
+        toolCalls: [{ id: "call-1", name: "missing_tool", args: {} }],
+      },
+      { content: "done", model: "test" },
+    ]);
+    context.onMessagesChanged = onMessagesChanged;
+
+    await new NormalModeHandler().run("use a tool", context);
+
+    expect(onMessagesChanged).toHaveBeenCalledTimes(4);
+    expect(onMessagesChanged.mock.calls[0][0]).toEqual([{ role: "user", content: "use a tool" }]);
+    expect(onMessagesChanged.mock.calls.at(-1)?.[0]).toMatchObject([
+      { role: "user", content: "use a tool" },
+      { role: "assistant", content: null },
+      { role: "tool", toolCallId: "call-1" },
+      { role: "assistant", content: "done" },
+    ]);
+  });
+
   it("executes tool calls and sends tool results back through messages", async () => {
     const tool: ToolDefinition = {
       name: "read_context",

@@ -305,6 +305,7 @@ export async function executeApprovedPlan(
 
   for (const step of planState.steps) {
     step.status = "running";
+    await context.onPlanStateChanged?.(planState);
     context.output?.onPlanState?.(planState);
 
     try {
@@ -314,6 +315,7 @@ export async function executeApprovedPlan(
       if (result.reachedLimit) {
         step.status = "failed";
         step.error = "Reached max execution steps";
+        await context.onPlanStateChanged?.(planState);
         context.output?.onPlanState?.(planState);
         return {
           iterations: totalIterations,
@@ -324,10 +326,12 @@ export async function executeApprovedPlan(
 
       step.status = "done";
       step.error = undefined;
+      await context.onPlanStateChanged?.(planState);
       context.output?.onPlanState?.(planState);
     } catch (error) {
       step.status = "failed";
       step.error = error instanceof Error ? error.message : String(error);
+      await context.onPlanStateChanged?.(planState);
       context.output?.onPlanState?.(planState);
       return {
         iterations: totalIterations,
@@ -339,6 +343,8 @@ export async function executeApprovedPlan(
 
   const summary = `Plan completed\n${formatPlanState(planState)}`;
   context.messages.push({ role: "assistant", content: summary });
+  await context.onMessagesChanged?.([...context.messages]);
+  await context.onPlanStateChanged?.(undefined);
   context.output?.onAssistantMessage?.(summary);
 
   return {
@@ -354,6 +360,7 @@ export class PlanModeHandler implements ModeHandler {
 
   async run(input: string, context: RunContext): Promise<ModeRunResult> {
     context.messages.push({ role: "user", content: input });
+    await context.onMessagesChanged?.([...context.messages]);
 
     const response = await context.provider.chat({
       messages: [...context.messages],
@@ -372,6 +379,8 @@ export class PlanModeHandler implements ModeHandler {
     const planState = parsePlanResponse(response, input);
     const formattedPlan = `${formatPlanState(planState)}\n\nEnter Y to execute, N to cancel, or provide feedback to revise the plan.`;
     context.messages.push({ role: "assistant", content: formattedPlan });
+    await context.onMessagesChanged?.([...context.messages]);
+    await context.onPlanStateChanged?.(planState);
     context.output?.onAssistantMessage?.(formattedPlan);
 
     return {

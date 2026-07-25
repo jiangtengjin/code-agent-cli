@@ -57,4 +57,22 @@ describe("UsageTracker", () => {
       ].join("\n"),
     );
   });
+
+  it("restores totals from a persisted snapshot", () => {
+    const tracker = new UsageTracker({
+      promptTokens: 12,
+      completionTokens: 8,
+      totalTokens: 20,
+      calls: 2,
+    });
+
+    tracker.record({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+
+    expect(tracker.snapshot()).toEqual({
+      promptTokens: 15,
+      completionTokens: 10,
+      totalTokens: 25,
+      calls: 3,
+    });
+  });
 });

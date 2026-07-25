@@ -7,9 +7,14 @@
  * 优先级高的配置项会覆盖优先级低的同名配置项。
  */
 
-import type { Config, LLMConfig, MCPServerConfig } from "../types/config.js";
+import type { Config, LLMConfig, MCPServerConfig, SessionsConfig } from "../types/config.js";
 import type { ChatMode } from "../types/mode.js";
-import { getGlobalConfigPath, getProjectConfigPath, loadConfigFile } from "./manager.js";
+import {
+  getDefaultSessionsStorePath,
+  getGlobalConfigPath,
+  getProjectConfigPath,
+  loadConfigFile,
+} from "./manager.js";
 
 /** CLI 命令行选项 */
 export interface CLIOptions {
@@ -76,12 +81,30 @@ function deepMerge(base: Config, ...sources: Partial<Config>[]): Config {
           ...result.mcpServers,
           ...(value as Record<string, MCPServerConfig>),
         };
+      } else if (key === "sessions" && typeof value === "object" && result.sessions) {
+        result.sessions = {
+          ...result.sessions,
+          ...(value as SessionsConfig),
+        };
       } else {
         (result as Record<string, unknown>)[key] = value;
       }
     }
   }
   return result;
+}
+
+function applySessionDefaults(config: Config): Config {
+  return {
+    ...config,
+    sessions: {
+      enabled: true,
+      storePath: getDefaultSessionsStorePath(),
+      defaultScope: "workspace",
+      includePromptSessions: false,
+      ...(config.sessions ?? {}),
+    },
+  };
 }
 
 export class ConfigResolver {
@@ -120,7 +143,7 @@ export class ConfigResolver {
       this.cliOptionsToConfig(cliOptions),
     );
 
-    return merged;
+    return applySessionDefaults(merged);
   }
 
   /** 将 CLI 选项转换为配置对象 */

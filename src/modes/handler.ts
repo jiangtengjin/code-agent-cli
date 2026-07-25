@@ -7,6 +7,7 @@ import type { Config } from "../types/config.js";
 import type { ChatMode } from "../types/mode.js";
 import type { PlanState } from "../types/plan.js";
 import type { LLMMessage, LLMToolCall, LLMUsage } from "../types/provider.js";
+import type { SessionStatus } from "../types/session.js";
 import type { ToolResult } from "../types/tool.js";
 
 export type ConfirmToolCall = (toolCall: LLMToolCall) => Promise<boolean>;
@@ -31,6 +32,9 @@ export interface RunContext {
   timing: TaskTimingStats;
   skipConfirm: boolean;
   confirmToolCall: ConfirmToolCall;
+  onMessagesChanged?: (messages: LLMMessage[]) => Promise<void> | void;
+  onStatusChanged?: (status: SessionStatus, reason?: string) => Promise<void> | void;
+  onPlanStateChanged?: (plan?: PlanState) => Promise<void> | void;
   output?: RunOutput;
 }
 
