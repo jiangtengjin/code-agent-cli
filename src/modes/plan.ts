@@ -278,6 +278,14 @@ function parsePlanResponse(response: LLMResponse, originalTask: string): PlanSta
   };
 }
 
+function isAbortError(error: unknown): boolean {
+  if (error instanceof Error) {
+    return error.name === "AbortError";
+  }
+
+  return false;
+}
+
 export function formatPlanState(plan: PlanState): string {
   const lines = [`[PLAN] ${plan.summary}`];
   for (const [index, step] of plan.steps.entries()) {
@@ -329,6 +337,9 @@ export async function executeApprovedPlan(
       await context.onPlanStateChanged?.(planState);
       context.output?.onPlanState?.(planState);
     } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
       step.status = "failed";
       step.error = error instanceof Error ? error.message : String(error);
       await context.onPlanStateChanged?.(planState);
@@ -365,6 +376,7 @@ export class PlanModeHandler implements ModeHandler {
     const response = await context.provider.chat({
       messages: [...context.messages],
       systemPrompt: PLAN_SYSTEM_PROMPT,
+      signal: context.abortSignal,
     });
 
     context.usageTracker.record(response.usage);

@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { createSessionSummary } from "./runtime.js";
+import { DEFAULT_SESSION_TITLE, createSessionState, createSessionSummary } from "./runtime.js";
 import type { SessionEvent, SessionState, SessionSummary } from "../types/session.js";
 
 type SessionMeta = {
@@ -87,7 +87,7 @@ export class SessionStore {
       const content = await readFile(this.getStatePath(sessionId), "utf8");
       return JSON.parse(content) as SessionState;
     } catch {
-      return undefined;
+      return this.rebuildSessionFromArtifacts(sessionId);
     }
   }
 
@@ -174,6 +174,106 @@ export class SessionStore {
     try {
       const content = await readFile(this.getIndexPath(), "utf8");
       return JSON.parse(content) as SessionSummary[];
+    } catch {
+      return [];
+    }
+  }
+
+  private async loadMeta(sessionId: string): Promise<SessionMeta | undefined> {
+    try {
+      const content = await readFile(this.getMetaPath(sessionId), "utf8");
+      return JSON.parse(content) as SessionMeta;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async rebuildSessionFromArtifacts(sessionId: string): Promise<SessionState | undefined> {
+    const [meta, summary, transcript] = await Promise.all([
+      this.loadMeta(sessionId),
+      this.getSummary(sessionId),
+      this.loadTranscriptEvents(sessionId),
+    ]);
+
+    if (!meta && !summary) {
+      return undefined;
+    }
+
+    const createdAt = meta?.createdAt ?? summary?.createdAt ?? new Date(0).toISOString();
+    const state = createSessionState({
+      sessionId,
+      kind: meta?.kind ?? summary?.kind ?? "interactive",
+      mode: summary?.mode ?? "normal",
+      workspaceKey: meta?.workspaceKey ?? summary?.workspaceKey ?? "",
+      workspacePath: meta?.workspacePath ?? summary?.workspacePath ?? "",
+      now: createdAt,
+      title: summary?.title ?? DEFAULT_SESSION_TITLE,
+      parentSessionId: meta?.parentSessionId ?? summary?.parentSessionId,
+    });
+
+    state.updatedAt = summary?.updatedAt ?? createdAt;
+    state.lastActiveAt = summary?.lastActiveAt ?? createdAt;
+    state.status = summary?.status ?? "idle";
+    state.archivedAt = summary?.archivedAt;
+
+    for (const event of transcript) {
+      switch (event.type) {
+        case "message":
+          state.messages.push(event.message);
+          break;
+        case "status":
+          state.status = event.status;
+          if (event.status !== "archived") {
+            state.archivedAt = undefined;
+          }
+          break;
+        case "plan":
+          state.pendingPlan = event.planState ?? undefined;
+          break;
+        case "fork":
+          state.parentSessionId ??= event.parentSessionId;
+          break;
+        case "archive":
+          state.status = "archived";
+          state.archivedAt = event.createdAt;
+          break;
+        case "clear":
+          state.messages = [];
+          state.pendingPlan = undefined;
+          state.status = "idle";
+          state.archivedAt = undefined;
+          break;
+        case "resume":
+          break;
+        default:
+          break;
+      }
+
+      state.updatedAt = event.createdAt;
+      state.lastActiveAt = event.createdAt;
+    }
+
+    if (!summary?.title || summary.title === DEFAULT_SESSION_TITLE) {
+      state.title = state.messages.length > 0 ? createSessionSummary(state).title : DEFAULT_SESSION_TITLE;
+    }
+
+    return state;
+  }
+
+  private async loadTranscriptEvents(sessionId: string): Promise<SessionEvent[]> {
+    try {
+      const content = await readFile(this.getTranscriptPath(sessionId), "utf8");
+      return content
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .flatMap((line) => {
+          try {
+            return [JSON.parse(line) as SessionEvent];
+          } catch {
+            return [];
+          }
+        });
     } catch {
       return [];
     }

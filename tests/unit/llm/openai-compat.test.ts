@@ -113,6 +113,30 @@ describe('OpenAICompatibleProvider', () => {
       messages: [{ role: 'user', content: 'Hi' }],
     })).rejects.toThrow()
   })
+
+  it('forwards abort signals to fetch', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        choices: [{ message: { content: 'Hello!' } }],
+        model: 'deepseek-coder',
+      }),
+    })
+
+    const provider = new OpenAICompatibleProvider({
+      model: 'deepseek-coder',
+      baseUrl: 'https://api.deepseek.com/v1',
+      apiKey: 'sk-test',
+    })
+    const abortController = new AbortController()
+
+    await provider.chat({
+      messages: [{ role: 'user', content: 'Hi' }],
+      signal: abortController.signal,
+    } as any)
+
+    expect(mockFetch.mock.calls[0][1]?.signal).toBe(abortController.signal)
+  })
 })
 
 describe('createProviderFromConfig', () => {

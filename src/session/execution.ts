@@ -148,6 +148,7 @@ export async function runExecutionLoop(
         messages: [...context.messages],
         systemPrompt: context.config.systemPrompt,
         tools: context.toolRegistry.getToolDefinitions(),
+        signal: context.abortSignal,
       })
       .finally(() => {
         context.timing.thinkingMs += elapsedSince(thinkingStartedAt);

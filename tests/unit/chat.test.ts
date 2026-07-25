@@ -1287,4 +1287,122 @@ describe('startChat', () => {
 
     logSpy.mockRestore()
   })
+
+  it('marks the active session interrupted when Ctrl+C aborts a running turn', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-interrupt-'))
+    tempDirs.push(tempDir)
+    const abortError = Object.assign(new Error('Request aborted'), { name: 'AbortError' })
+
+    providerMocks.chat.mockImplementationOnce(
+      ({ signal }: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(abortError), { once: true })
+        }),
+    )
+
+    const { startChat } = await import('../../src/cli/chat.js')
+    const { SessionStore } = await import('../../src/session/store.js')
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      sessions: {
+        enabled: true,
+        storePath: tempDir,
+        defaultScope: 'workspace',
+        includePromptSessions: false,
+      },
+    } as any)
+
+    const linePromise = callbacks.line('long running task')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(providerMocks.chat).toHaveBeenCalledTimes(1)
+
+    const keypressListener = (process.stdin.prependListener as any).mock.calls.find(
+      ([eventName]: [string]) => eventName === 'keypress',
+    )?.[1]
+    expect(keypressListener).toBeTypeOf('function')
+
+    keypressListener('', { ctrl: true, name: 'c' })
+    await linePromise
+
+    const index = JSON.parse(await fs.readFile(path.join(tempDir, 'index.json'), 'utf8'))
+    const restored = await new SessionStore(tempDir).loadSession(index[0].id)
+
+    expect(restored).toMatchObject({
+      status: 'interrupted',
+      messages: [{ role: 'user', content: 'long running task' }],
+    })
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('interrupted'))
+
+    logSpy.mockRestore()
+  })
+
+  it('restores interrupted sessions as idle without auto-running them', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-interrupted-restore-'))
+    tempDirs.push(tempDir)
+    const { SessionStore } = await import('../../src/session/store.js')
+    const { createSessionState } = await import('../../src/session/runtime.js')
+    const { resolveWorkspace } = await import('../../src/session/workspace.js')
+    const { startChat } = await import('../../src/cli/chat.js')
+    const workspace = await resolveWorkspace(process.cwd())
+    const store = new SessionStore(tempDir)
+    const state = createSessionState({
+      sessionId: 'session-interrupted',
+      kind: 'interactive',
+      mode: 'normal',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    state.messages = [{ role: 'user', content: 'previous context' }]
+    state.status = 'interrupted'
+    state.title = 'Resume interrupted task'
+    state.updatedAt = '2026-07-25T12:05:00.000Z'
+    state.lastActiveAt = '2026-07-25T12:05:00.000Z'
+    await store.saveSession(state)
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat(
+      {
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        sessions: {
+          enabled: true,
+          storePath: tempDir,
+          defaultScope: 'workspace',
+          includePromptSessions: false,
+        },
+      } as any,
+      { continueLast: true } as any,
+    )
+
+    expect(providerMocks.chat).not.toHaveBeenCalled()
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('interrupted'))
+
+    await callbacks.line('/session')
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Status: idle'))
+
+    await callbacks.line('continue working')
+
+    expect(providerMocks.chat).toHaveBeenCalledTimes(1)
+    expect(providerMocks.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          { role: 'user', content: 'previous context' },
+          { role: 'user', content: 'continue working' },
+        ],
+      }),
+    )
+
+    logSpy.mockRestore()
+  })
 })

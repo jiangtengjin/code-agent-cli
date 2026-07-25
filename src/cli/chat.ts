@@ -599,10 +599,49 @@ export type StartChatOptions = {
   resumeQuery?: string;
 };
 
+type InitialSessionLoadResult = {
+  session: SessionState;
+  resumedFromInterrupted: boolean;
+};
+
+function isAbortError(error: unknown): boolean {
+  if (error instanceof Error) {
+    return error.name === "AbortError";
+  }
+
+  return false;
+}
+
+function normalizeInterruptedSession(state: SessionState): InitialSessionLoadResult {
+  if (state.status !== "interrupted") {
+    return {
+      session: state,
+      resumedFromInterrupted: false,
+    };
+  }
+
+  const normalized = structuredClone(state);
+  normalized.status = "idle";
+
+  if (normalized.pendingPlan) {
+    for (const step of normalized.pendingPlan.steps) {
+      if (step.status === "running") {
+        step.status = "pending";
+        step.error = undefined;
+      }
+    }
+  }
+
+  return {
+    session: normalized,
+    resumedFromInterrupted: true,
+  };
+}
+
 async function loadInitialSession(
   config: Config,
   options: StartChatOptions,
-): Promise<SessionState | undefined> {
+): Promise<InitialSessionLoadResult | undefined> {
   if (!config.sessions?.enabled || !config.sessions.storePath) {
     return undefined;
   }
@@ -627,7 +666,8 @@ async function loadInitialSession(
     return undefined;
   }
 
-  return store.loadSession(summary.id);
+  const state = await store.loadSession(summary.id);
+  return state ? normalizeInterruptedSession(state) : undefined;
 }
 
 export async function runPrompt(config: Config, prompt: string): Promise<void> {
@@ -749,7 +789,8 @@ export async function startChat(
       console.log(chalk.yellow(message));
     },
   });
-  const initialSession = await loadInitialSession(config, options);
+  const initialSessionLoad = await loadInitialSession(config, options);
+  const initialSession = initialSessionLoad?.session;
   const messages: LLMMessage[] = initialSession ? [...initialSession.messages] : [];
   const usageTracker = new UsageTracker(initialSession?.usage);
   const costTracker = new CostTracker(config.costGuard, initialSession?.cost);
@@ -788,6 +829,14 @@ export async function startChat(
   let exitRequested = false;
   let exitCode = 0;
   let exitHandled = false;
+  let activeRun:
+    | {
+        controller: AbortController;
+        spinner: ReturnType<typeof ora>;
+        interruptRequested: boolean;
+        forceExitRequested: boolean;
+      }
+    | undefined;
 
   function resetRuntimeState(): void {
     messages.length = 0;
@@ -1041,6 +1090,25 @@ export async function startChat(
     }
   }
 
+  async function resetInterruptedPlanState(): Promise<void> {
+    if (!pendingPlan) {
+      return;
+    }
+
+    let changed = false;
+    for (const step of pendingPlan.steps) {
+      if (step.status === "running") {
+        step.status = "pending";
+        step.error = undefined;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      await persistence.handlePlanStateChanged(pendingPlan);
+    }
+  }
+
   function formatSuggestionRows(line: string): string[] {
     if (!line.startsWith("/")) return [];
 
@@ -1141,8 +1209,44 @@ export async function startChat(
     renderSuggestionBlock();
   }
 
+  function requestActiveRunInterrupt(): void {
+    if (!activeRun) {
+      return;
+    }
+
+    if (activeRun.interruptRequested) {
+      if (activeRun.forceExitRequested) {
+        return;
+      }
+
+      activeRun.forceExitRequested = true;
+      exitRequested = true;
+      exitCode = 130;
+      activeRun.spinner.stop();
+      console.log(chalk.yellow("Interrupt received again. Exiting after persisting the session state."));
+      void persistence
+        .updateStatus("interrupted", "ctrl_c")
+        .catch(() => undefined)
+        .finally(() => {
+          void shutdown({ exit: true, exitCode: 130 });
+        });
+      return;
+    }
+
+    activeRun.interruptRequested = true;
+    activeRun.controller.abort();
+  }
+
   const onKeypress: KeypressListener = (_str, key) => {
-    if (key.name === "return" || key.name === "enter" || (key.ctrl && key.name === "c")) {
+    if (key.ctrl && key.name === "c") {
+      clearSuggestionBlock();
+      if (activeRun) {
+        requestActiveRunInterrupt();
+      }
+      return;
+    }
+
+    if (key.name === "return" || key.name === "enter") {
       clearSuggestionBlock();
       return;
     }
@@ -1219,6 +1323,13 @@ export async function startChat(
       const timing = createTaskTiming();
       const spinner = ora({ text: "AI thinking...", color: "cyan" }).start();
       const handler = modeRouter.getHandler(mode);
+      const abortController = new AbortController();
+      activeRun = {
+        controller: abortController,
+        spinner,
+        interruptRequested: false,
+        forceExitRequested: false,
+      };
       await persistence.updateStatus("running");
       const runContext = {
         provider,
@@ -1228,6 +1339,7 @@ export async function startChat(
         usageTracker,
         costTracker,
         timing,
+        abortSignal: abortController.signal,
         skipConfirm: Boolean(config.yolo),
         confirmToolCall: (toolCall: LLMToolCall) => userConfirm(toolCall, rl),
         onMessagesChanged: (nextMessages: LLMMessage[]) => persistence.handleMessagesChanged(nextMessages),
@@ -1298,11 +1410,27 @@ export async function startChat(
           await persistence.updateStatus(result.planState ? "awaiting_plan_approval" : "idle");
         }
       } catch (error) {
-        await persistence.updateStatus("idle");
-        spinner.stop();
-        displayError(error);
+        if (activeRun?.interruptRequested && isAbortError(error)) {
+          await resetInterruptedPlanState();
+          await persistence.updateStatus("interrupted", "ctrl_c");
+          spinner.stop();
+          console.log(
+            chalk.yellow(
+              "Current execution was interrupted. The session was preserved and can be resumed.",
+            ),
+          );
+        } else {
+          await persistence.updateStatus("idle");
+          spinner.stop();
+          displayError(error);
+        }
       } finally {
+        activeRun = undefined;
         spinner.stop();
+      }
+
+      if (exitRequested) {
+        return;
       }
 
       console.log(chalk.gray(formatTaskTiming(timing)));
@@ -1313,6 +1441,12 @@ export async function startChat(
   await runSetup(() => {
     promptNextInput();
   });
+
+  if (initialSessionLoad?.resumedFromInterrupted) {
+    console.log(
+      chalk.yellow("Restored an interrupted session. Review the context and continue when ready."),
+    );
+  }
 
   await runSetup(() => {
     rl.on("close", async () => {

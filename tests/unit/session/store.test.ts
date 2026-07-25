@@ -242,4 +242,54 @@ describe("SessionStore", () => {
     expect(byTitle?.id).toBe("abc123-session");
     expect(crossWorkspace?.id).toBe("def456-session");
   });
+
+  it("rebuilds session state from transcript when state.json is corrupted", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "code-agent-sessions-"));
+    tempDirs.push(tempDir);
+    const store = new SessionStore(tempDir);
+    const state = buildState({
+      sessionId: "session-rebuild",
+      mode: "plan",
+      title: "Rebuild session",
+      pendingPlan: {
+        originalTask: "restore plan",
+        summary: "Plan summary",
+        steps: [{ title: "Step 1", prompt: "inspect state", status: "pending" }],
+      },
+    });
+
+    await store.saveSession(state);
+    await store.appendEvent(state.sessionId, {
+      type: "message",
+      createdAt: "2026-07-25T12:01:00.000Z",
+      message: { role: "user", content: "Fix the flaky test failure in CI" },
+    });
+    await store.appendEvent(state.sessionId, {
+      type: "plan",
+      createdAt: "2026-07-25T12:02:00.000Z",
+      planState: state.pendingPlan ?? null,
+    });
+    await store.appendEvent(state.sessionId, {
+      type: "status",
+      createdAt: "2026-07-25T12:03:00.000Z",
+      status: "interrupted",
+      reason: "ctrl_c",
+    });
+
+    const statePath = path.join(tempDir, "sessions", state.sessionId, "state.json");
+    await fs.writeFile(statePath, "{ broken json", "utf8");
+
+    const restored = await store.loadSession(state.sessionId);
+
+    expect(restored).toMatchObject({
+      sessionId: "session-rebuild",
+      title: "Rebuild session",
+      mode: "plan",
+      status: "interrupted",
+    });
+    expect(restored?.messages).toEqual([{ role: "user", content: "Fix the flaky test failure in CI" }]);
+    expect(restored?.pendingPlan).toMatchObject({
+      summary: "Plan summary",
+    });
+  });
 });

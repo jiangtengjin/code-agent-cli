@@ -80,6 +80,25 @@ describe("mode execution loop", () => {
     });
   });
 
+  it("passes the active abort signal down to provider calls", async () => {
+    const { provider, context } = createContext([
+      {
+        content: "hello",
+        model: "test",
+      },
+    ]);
+    const abortController = new AbortController();
+    context.abortSignal = abortController.signal;
+
+    await new NormalModeHandler().run("hi", context);
+
+    expect(provider.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        signal: abortController.signal,
+      }),
+    );
+  });
+
   it("notifies message persistence hooks whenever the transcript changes", async () => {
     const onMessagesChanged = vi.fn();
     const { context } = createContext([

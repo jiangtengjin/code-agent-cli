@@ -30,6 +30,7 @@ export interface RunContext {
   usageTracker: UsageTracker;
   costTracker?: CostTracker;
   timing: TaskTimingStats;
+  abortSignal?: AbortSignal;
   skipConfirm: boolean;
   confirmToolCall: ConfirmToolCall;
   onMessagesChanged?: (messages: LLMMessage[]) => Promise<void> | void;
