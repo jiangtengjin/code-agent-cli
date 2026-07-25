@@ -150,6 +150,21 @@ describe('createProviderFromConfig', () => {
     expect(provider.name).toBe('model-router')
   })
 
+  it('creates a routed provider when only routed models are configured', async () => {
+    const { createProviderFromConfig } = await import('../../../src/llm/registry.js')
+    const provider = createProviderFromConfig({
+      models: {
+        default: {
+          provider: 'deepseek',
+          model: 'deepseek-chat',
+          apiKey: 'sk-default',
+        },
+      },
+    } as any)
+
+    expect(provider.name).toBe('model-router')
+  })
+
   it('throws if apiKey is missing', async () => {
     const { createProviderFromConfig } = await import('../../../src/llm/registry.js')
     expect(() => createProviderFromConfig({

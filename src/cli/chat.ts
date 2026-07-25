@@ -338,6 +338,7 @@ async function handleSlashCommand(
     usageTracker: UsageTracker;
     costTracker: CostTracker;
     setMode: (m: ChatMode) => void;
+    clearPendingPlan?: () => void;
     onExit?: (code: number) => Promise<void> | void;
   },
 ): Promise<"continue" | "exit"> {
@@ -374,6 +375,7 @@ ${chalk.bold("可用命令:")}
 
     case "clear":
       ctx.messages.length = 0;
+      ctx.clearPendingPlan?.();
       console.log(chalk.green("对话历史已清空"));
       break;
 
@@ -476,14 +478,21 @@ function printPlanState(plan: PlanState): void {
   console.log(`\n${header}\n${formatPlanState(plan)}\n${footer}\n`);
 }
 
-export async function runPrompt(config: Config, prompt: string): Promise<void> {
-  if (!config.model?.apiKey) {
-    console.error(chalk.red("API Key is not configured. Run code-agent init first."));
+function createProviderOrExit(config: Config): LLMProvider | null {
+  try {
+    return createProviderFromConfig(config);
+  } catch (error) {
+    displayError(error);
     process.exit(1);
+    return null;
+  }
+}
+
+export async function runPrompt(config: Config, prompt: string): Promise<void> {
+  const provider = createProviderOrExit(config);
+  if (!provider) {
     return;
   }
-
-  const provider = createProviderFromConfig(config);
   const toolRegistry = createDefaultToolRegistry();
   const mcpManager = new MCPServerManager(config.mcpServers, toolRegistry, {
     onWarning: (message) => {
@@ -533,6 +542,7 @@ export async function runPrompt(config: Config, prompt: string): Promise<void> {
             messages,
             config,
             usageTracker,
+            costTracker,
             timing,
             skipConfirm: true,
             confirmToolCall: async () => true,
@@ -567,13 +577,16 @@ export async function runPrompt(config: Config, prompt: string): Promise<void> {
 }
 
 export async function startChat(config: Config): Promise<void> {
-  if (!config.model?.apiKey) {
+  if (!config.model?.apiKey && !config.models && config.model?.provider !== "ollama") {
     console.error(chalk.red("API Key 未配置。请运行 code-agent init 初始化配置。"));
     process.exit(1);
     return;
   }
 
-  const provider = createProviderFromConfig(config);
+  const provider = createProviderOrExit(config);
+  if (!provider) {
+    return;
+  }
   const toolRegistry = createDefaultToolRegistry();
   const mcpManager = new MCPServerManager(config.mcpServers, toolRegistry, {
     onWarning: (message) => {
@@ -717,6 +730,13 @@ export async function startChat(config: Config): Promise<void> {
     rl.setPrompt(CHAT_PROMPT);
   }
 
+  function setMode(nextMode: ChatMode): void {
+    mode = nextMode;
+    if (nextMode !== "plan") {
+      pendingPlan = undefined;
+    }
+  }
+
   function formatSuggestionRows(line: string): string[] {
     if (!line.startsWith("/")) return [];
 
@@ -810,7 +830,7 @@ export async function startChat(config: Config): Promise<void> {
 
   function cycleMode(): void {
     const idx = MODES.indexOf(mode);
-    mode = MODES[(idx + 1) % MODES.length];
+    setMode(MODES[(idx + 1) % MODES.length]);
     redrawInputFrame(mode);
     setChatPrompt();
     rl.prompt(true);
@@ -871,11 +891,11 @@ export async function startChat(config: Config): Promise<void> {
           usageTracker,
           costTracker,
           setMode: (m) => {
-            mode = m;
-            if (m !== "plan") {
-              pendingPlan = undefined;
-            }
+            setMode(m);
             setChatPrompt();
+          },
+          clearPendingPlan: () => {
+            pendingPlan = undefined;
           },
           onExit: (code) => shutdown({ exit: true, exitCode: code }),
         });

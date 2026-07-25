@@ -312,6 +312,24 @@ describe('startChat', () => {
     logSpy.mockRestore()
   })
 
+  it('starts chat when only routed models are configured', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    await startChat({
+      models: {
+        default: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      },
+    } as any)
+
+    expect(exitSpy).not.toHaveBeenCalled()
+    expect(mockRl.on).toHaveBeenCalled()
+
+    logSpy.mockRestore()
+    exitSpy.mockRestore()
+  })
+
   it('stops MCP servers when readline closes', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
@@ -785,6 +803,118 @@ describe('startChat', () => {
 
     expect(providerMocks.chat).toHaveBeenCalledTimes(3)
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Plan completed'))
+
+    logSpy.mockRestore()
+  })
+
+  it('runs prompts when only routed models are configured', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { runPrompt } = await import('../../src/cli/chat.js')
+
+    await runPrompt(
+      {
+        models: {
+          default: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        },
+      } as any,
+      'hello from routed prompt',
+    )
+
+    expect(exitSpy).not.toHaveBeenCalled()
+    expect(providerMocks.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [{ role: 'user', content: 'hello from routed prompt' }],
+      }),
+    )
+
+    logSpy.mockRestore()
+    exitSpy.mockRestore()
+  })
+
+  it('tracks cost for plan generation and approved steps in yolo prompt mode', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { CostTracker } = await import('../../src/llm/cost-tracker.js')
+    const recordSpy = vi.spyOn(CostTracker.prototype, 'record')
+
+    providerMocks.chat
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          summary: 'Plan summary',
+          steps: [{ title: 'Inspect auth flow', prompt: 'inspect the existing auth flow' }],
+        }),
+        model: 'deepseek-chat',
+        usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+      })
+      .mockResolvedValueOnce({
+        content: 'Step completed',
+        model: 'deepseek-coder',
+        usage: { promptTokens: 30, completionTokens: 10, totalTokens: 40 },
+      })
+
+    const { runPrompt } = await import('../../src/cli/chat.js')
+
+    await runPrompt(
+      {
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        mode: 'plan',
+        yolo: true,
+        costGuard: { monthlyBudget: 10, warnAtPercent: 80 },
+      } as any,
+      'add jwt auth',
+    )
+
+    expect(recordSpy).toHaveBeenCalledTimes(2)
+    expect(recordSpy).toHaveBeenNthCalledWith(1, 'deepseek-chat', {
+      promptTokens: 10,
+      completionTokens: 20,
+      totalTokens: 30,
+    })
+    expect(recordSpy).toHaveBeenNthCalledWith(2, 'deepseek-coder', {
+      promptTokens: 30,
+      completionTokens: 10,
+      totalTokens: 40,
+    })
+
+    logSpy.mockRestore()
+  })
+
+  it('clears pending plan state when /clear is issued', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          summary: 'Plan summary',
+          steps: [{ title: 'Inspect auth flow', prompt: 'inspect the existing auth flow' }],
+        }),
+        model: 'test',
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          summary: 'One-letter task',
+          steps: [{ title: 'Echo input', prompt: 'echo y' }],
+        }),
+        model: 'test',
+      })
+
+    const { startChat } = await import('../../src/cli/chat.js')
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      mode: 'plan',
+    } as any)
+
+    await callbacks.line('add jwt auth')
+    await callbacks.line('/clear')
+    await callbacks.line('y')
+
+    expect(providerMocks.chat).toHaveBeenCalledTimes(2)
+    expect(providerMocks.chat.mock.calls[1][0].messages).toEqual([{ role: 'user', content: 'y' }])
+    expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Plan completed'))
 
     logSpy.mockRestore()
   })
