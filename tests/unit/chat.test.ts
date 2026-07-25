@@ -648,7 +648,7 @@ describe('startChat', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     providerMocks.chat.mockResolvedValueOnce({
       content: 'reply with cost',
-      model: 'deepseek-coder',
+      model: 'deepseek-v4-flash',
       usage: { promptTokens: 1000, completionTokens: 500, totalTokens: 1500 },
     })
     const { startChat } = await import('../../src/cli/chat.js')
@@ -659,7 +659,7 @@ describe('startChat', () => {
     })
 
     await startChat({
-      model: { provider: 'deepseek', model: 'deepseek-coder', apiKey: 'sk-test' },
+      model: { provider: 'deepseek', model: 'deepseek-v4-flash', apiKey: 'sk-test' },
       costGuard: { monthlyBudget: 10, warnAtPercent: 80 },
     } as any)
 
@@ -667,7 +667,7 @@ describe('startChat', () => {
     await lineCallbacks[0]('/cost')
 
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Cost usage'))
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('deepseek-coder'))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('deepseek-v4-flash'))
 
     logSpy.mockRestore()
   })
@@ -843,12 +843,12 @@ describe('startChat', () => {
           summary: 'Plan summary',
           steps: [{ title: 'Inspect auth flow', prompt: 'inspect the existing auth flow' }],
         }),
-        model: 'deepseek-chat',
+        model: 'deepseek-v4-flash',
         usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
       })
       .mockResolvedValueOnce({
         content: 'Step completed',
-        model: 'deepseek-coder',
+        model: 'deepseek-v4-pro',
         usage: { promptTokens: 30, completionTokens: 10, totalTokens: 40 },
       })
 
@@ -865,12 +865,12 @@ describe('startChat', () => {
     )
 
     expect(recordSpy).toHaveBeenCalledTimes(2)
-    expect(recordSpy).toHaveBeenNthCalledWith(1, 'deepseek-chat', {
+    expect(recordSpy).toHaveBeenNthCalledWith(1, 'deepseek-v4-flash', {
       promptTokens: 10,
       completionTokens: 20,
       totalTokens: 30,
     })
-    expect(recordSpy).toHaveBeenNthCalledWith(2, 'deepseek-coder', {
+    expect(recordSpy).toHaveBeenNthCalledWith(2, 'deepseek-v4-pro', {
       promptTokens: 30,
       completionTokens: 10,
       totalTokens: 40,

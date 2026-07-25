@@ -2,6 +2,26 @@ import { describe, expect, it } from "vitest";
 import { CostTracker, formatCostSnapshot } from "../../../src/llm/cost-tracker.js";
 
 describe("CostTracker", () => {
+  it("tracks DeepSeek V4 Flash with built-in pricing", () => {
+    const tracker = new CostTracker();
+
+    tracker.record("deepseek-v4-flash", {
+      promptTokens: 1000,
+      completionTokens: 500,
+      totalTokens: 1500,
+    });
+
+    const snapshot = tracker.snapshot();
+
+    expect(snapshot.totalCost).toBeCloseTo(0.002, 6);
+    expect(snapshot.byModel["deepseek-v4-flash"]).toMatchObject({
+      promptTokens: 1000,
+      completionTokens: 500,
+      totalTokens: 1500,
+    });
+    expect(snapshot.byModel["deepseek-v4-flash"]?.cost).toBeCloseTo(0.002, 6);
+  });
+
   it("tracks estimated cost by model and in total", () => {
     const tracker = new CostTracker({
       pricing: {

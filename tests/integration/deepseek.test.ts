@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { OpenAICompatibleProvider } from '../../src/llm/adapters/openai-compat.js'
 
 const API_KEY = process.env.CODE_AGENT_API_KEY
-const TEST_MODEL = process.env.CODE_AGENT_MODEL ?? 'deepseek-chat'
+const TEST_MODEL = process.env.CODE_AGENT_MODEL ?? 'deepseek-v4-flash'
 
 describe.runIf(API_KEY)('DeepSeek 集成测试', () => {
   const provider = new OpenAICompatibleProvider({

@@ -24,8 +24,12 @@ export interface CostSnapshot {
 }
 
 const DEFAULT_PRICING: Record<string, ModelPricing> = {
+  // Official DeepSeek V4 list prices (cache miss) as of 2026-07-25.
+  "deepseek-v4-flash": { inputPerMillion: 1, outputPerMillion: 2, currency: "¥" },
+  "deepseek-v4-pro": { inputPerMillion: 3, outputPerMillion: 6, currency: "¥" },
   "deepseek-coder": { inputPerMillion: 2, outputPerMillion: 8, currency: "¥" },
-  "deepseek-chat": { inputPerMillion: 1, outputPerMillion: 4, currency: "¥" },
+  "deepseek-chat": { inputPerMillion: 1, outputPerMillion: 2, currency: "¥" },
+  "deepseek-reasoner": { inputPerMillion: 1, outputPerMillion: 2, currency: "¥" },
   "qwen-plus": { inputPerMillion: 4, outputPerMillion: 12, currency: "¥" },
   "glm-4": { inputPerMillion: 5, outputPerMillion: 15, currency: "¥" },
   "moonshot-v1-8k": { inputPerMillion: 12, outputPerMillion: 12, currency: "¥" },

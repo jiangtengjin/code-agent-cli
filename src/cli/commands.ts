@@ -22,6 +22,7 @@ import { mcpAdd, mcpList, mcpRemove } from "./mcp.js";
 
 export function createProgram(): Command {
   const program = new Command();
+  program.enablePositionalOptions();
 
   // 全局选项和默认行为
   program
@@ -74,15 +75,27 @@ export function createProgram(): Command {
   program.addCommand(configCmd);
 
   const mcpCmd = new Command("mcp").description("管理 MCP 服务");
+  mcpCmd.enablePositionalOptions();
 
   mcpCmd
     .command("add")
+    .description("添加 MCP 服务")
     .argument("<name>", "服务名称")
     .argument("<command>", "启动命令")
     .argument("[args...]", "命令参数")
     .option("--transport <transport>", "传输协议", "stdio")
     .option("--url <url>", "SSE/HTTP 服务地址")
     .option("--env <entry...>", "环境变量，格式 KEY=VALUE")
+    .passThroughOptions()
+    .addHelpText(
+      "after",
+      [
+        "",
+        "提示:",
+        "  <command> 后的选项会原样透传给 MCP 服务进程。",
+        "  如果要使用 mcp add 自身的 --transport/--url/--env 选项，请放在 <name> 之前。",
+      ].join("\n"),
+    )
     .action(mcpAdd);
 
   mcpCmd.command("remove").argument("<name>", "服务名称").action(mcpRemove);

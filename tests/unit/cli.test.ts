@@ -7,6 +7,12 @@ const cliMocks = vi.hoisted(() => ({
   startChat: vi.fn(),
 }));
 
+const mcpMocks = vi.hoisted(() => ({
+  mcpAdd: vi.fn(),
+  mcpList: vi.fn(),
+  mcpRemove: vi.fn(),
+}));
+
 vi.mock("../../src/config/resolver.js", () => ({
   ConfigResolver: vi.fn(() => ({
     resolve: cliMocks.resolve,
@@ -16,6 +22,12 @@ vi.mock("../../src/config/resolver.js", () => ({
 vi.mock("../../src/cli/chat.js", () => ({
   runPrompt: cliMocks.runPrompt,
   startChat: cliMocks.startChat,
+}));
+
+vi.mock("../../src/cli/mcp.js", () => ({
+  mcpAdd: mcpMocks.mcpAdd,
+  mcpList: mcpMocks.mcpList,
+  mcpRemove: mcpMocks.mcpRemove,
 }));
 
 describe("CLI command framework", () => {
@@ -110,5 +122,39 @@ describe("CLI command framework", () => {
     expect(cliMocks.resolve).toHaveBeenCalledWith(expect.objectContaining({ prompt: "hello" }));
     expect(cliMocks.runPrompt).toHaveBeenCalledWith(config, "hello");
     expect(cliMocks.startChat).not.toHaveBeenCalled();
+  });
+
+  it("passes through child command flags for mcp add", async () => {
+    const program = createProgram();
+
+    await program.parseAsync(
+      ["mcp", "add", "filesystem", "npx", "-y", "@modelcontextprotocol/server-filesystem", "."],
+      { from: "user" },
+    );
+
+    expect(mcpMocks.mcpAdd).toHaveBeenCalledWith(
+      "filesystem",
+      "npx",
+      ["-y", "@modelcontextprotocol/server-filesystem", "."],
+      expect.objectContaining({ transport: "stdio" }),
+      expect.anything(),
+    );
+  });
+
+  it("keeps child flags that would otherwise collide with CLI options", async () => {
+    const program = createProgram();
+
+    await program.parseAsync(
+      ["mcp", "add", "--transport", "sse", "filesystem", "npx", "--debug", "server.js"],
+      { from: "user" },
+    );
+
+    expect(mcpMocks.mcpAdd).toHaveBeenCalledWith(
+      "filesystem",
+      "npx",
+      ["--debug", "server.js"],
+      expect.objectContaining({ transport: "sse" }),
+      expect.anything(),
+    );
   });
 });
