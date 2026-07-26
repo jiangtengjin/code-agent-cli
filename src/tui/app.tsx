@@ -4,9 +4,15 @@ import { ShellFrame } from "./components/shell-frame.js";
 import { ChatScene } from "./scenes/chat.js";
 import { HomeScene } from "./scenes/home.js";
 import { PlaceholderScene } from "./scenes/placeholder.js";
+import { TasksScene } from "./scenes/tasks.js";
 import { completeGotoCommand, parseGotoCommand } from "./shell/router.js";
 import type { ShellStore } from "./shell/store.js";
-import { createInitialShellState, selectHomeSummary, type ShellState } from "./shell/state.js";
+import {
+  createInitialShellState,
+  selectHomeSummary,
+  selectTaskBoardSummary,
+  type ShellState,
+} from "./shell/state.js";
 import type { TUIScene, TerminalCapabilities } from "./types.js";
 
 export interface TUIAppProps {
@@ -24,6 +30,10 @@ function renderScene(state: ShellState) {
 
   if (state.activeScene === "chat") {
     return <ChatScene chat={state.chat} />;
+  }
+
+  if (state.activeScene === "tasks") {
+    return <TasksScene summary={selectTaskBoardSummary(state)} />;
   }
 
   return <PlaceholderScene scene={state.activeScene} />;

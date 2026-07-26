@@ -175,6 +175,107 @@ describe("TUIApp", () => {
     result.unmount();
   });
 
+  it("renders the tasks scene with grouped task visibility", () => {
+    const shellState = [
+      createInteractionEvent(
+        "session.changed",
+        {
+          summary: {
+            id: "session-6",
+            kind: "interactive",
+            title: "Task center",
+            workspaceKey: "workspace-a",
+            workspacePath: "D:/JAVA/code-agent-cli",
+            status: "running",
+            mode: "normal",
+            createdAt: "2026-07-26T16:00:00.000Z",
+            updatedAt: "2026-07-26T16:05:00.000Z",
+            lastActiveAt: "2026-07-26T16:05:00.000Z",
+            turnCount: 2,
+          },
+        },
+        "2026-07-26T16:00:30.000Z",
+      ),
+      createInteractionEvent(
+        "task.updated",
+        {
+          task: {
+            id: "task-1",
+            title: "Build tasks scene",
+            status: "running",
+            mode: "normal",
+            detail: "Rendering grouped tasks",
+          },
+        },
+        "2026-07-26T16:01:00.000Z",
+      ),
+      createInteractionEvent(
+        "task.updated",
+        {
+          task: {
+            id: "task-2",
+            title: "Approve release commit",
+            status: "awaiting_approval",
+            mode: "normal",
+            detail: "Waiting for approval",
+          },
+        },
+        "2026-07-26T16:02:00.000Z",
+      ),
+      createInteractionEvent(
+        "task.updated",
+        {
+          task: {
+            id: "task-3",
+            title: "Backfill MCP status",
+            status: "pending",
+            mode: "normal",
+          },
+        },
+        "2026-07-26T16:03:00.000Z",
+      ),
+      createInteractionEvent(
+        "task.updated",
+        {
+          task: {
+            id: "task-4",
+            title: "Fix stale draft restore",
+            status: "failed",
+            mode: "edit",
+            detail: "Patch rejected",
+          },
+        },
+        "2026-07-26T16:04:00.000Z",
+      ),
+    ].reduce(
+      (state, event) => reduceShellState(state, createInteractionEventAction(event)),
+      reduceShellState(createInitialShellState(), createSceneChangedAction("tasks")),
+    );
+
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: {
+          level: "full",
+          isTTY: true,
+          supportsAltScreen: true,
+          supportsColor: true,
+          reason: "interactive-terminal",
+        },
+        shellState,
+      }),
+    );
+
+    expect(result.lastFrame()).toContain("Current scene: tasks");
+    expect(result.lastFrame()).toContain("> Tasks");
+    expect(result.lastFrame()).toContain("Tasks");
+    expect(result.lastFrame()).toContain("Session focus: Task center");
+    expect(result.lastFrame()).toContain("Active: 2 | Queued: 1 | Finished: 1");
+    expect(result.lastFrame()).toContain("Approve release commit [awaiting_approval]");
+    expect(result.lastFrame()).toContain("Backfill MCP status [pending]");
+    expect(result.lastFrame()).toContain("Fix stale draft restore [failed]");
+    result.unmount();
+  });
+
   it("updates the rendered scene when driven by a shell store", async () => {
     const store = createShellStore();
     const result = render(

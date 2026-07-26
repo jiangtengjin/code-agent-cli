@@ -101,7 +101,7 @@ export interface StatusBarSummary {
   sessionStatus?: SessionStatus;
   workspacePath: string;
   pendingApprovalCount: number;
-  runningTaskCount: number;
+  activeTaskCount: number;
   lastEventAt?: string;
 }
 
@@ -125,6 +125,23 @@ export interface InspectorSummary {
   configIssueCount: number;
   healthyMcpServerCount: number;
   totalMcpServerCount: number;
+}
+
+export interface TaskBoardSummary {
+  sessionTitle: string;
+  sessionStatus?: SessionStatus;
+  active: ShellTaskEntry[];
+  queued: ShellTaskEntry[];
+  finished: ShellTaskEntry[];
+  counts: Record<InteractionTaskStatus, number>;
+  activeCount: number;
+  queuedCount: number;
+  finishedCount: number;
+  focusedTaskId?: string;
+}
+
+function isActiveTask(task: ShellTaskEntry): boolean {
+  return task.status === "running" || task.status === "awaiting_approval";
 }
 
 const DEFAULT_CONFIG_VALIDATION: ConfigValidationSnapshot = {
@@ -203,7 +220,7 @@ export function selectStatusBarSummary(state: ShellState): StatusBarSummary {
     workspacePath: state.currentSession?.workspacePath ?? "",
     pendingApprovalCount: state.approvals.items.filter((approval) => approval.status === "pending")
       .length,
-    runningTaskCount: state.tasks.filter((task) => task.status === "running").length,
+    activeTaskCount: state.tasks.filter((task) => isActiveTask(task)).length,
     lastEventAt: state.lastEventAt,
   };
 }
@@ -213,7 +230,7 @@ export function selectRailItems(state: ShellState): RailItemSummary[] {
     .length;
   const reviewFindings = state.reviewFindings.length;
   const configIssues = state.configValidation.issues.length;
-  const taskCount = state.tasks.filter((task) => task.status === "running").length;
+  const taskCount = state.tasks.filter((task) => isActiveTask(task)).length;
   const mcpServerCount = state.mcpServers.length;
   const hasResume = state.resume ? "1" : undefined;
 
@@ -259,5 +276,48 @@ export function selectInspectorSummary(state: ShellState): InspectorSummary {
     configIssueCount: state.configValidation.issues.length,
     healthyMcpServerCount,
     totalMcpServerCount: state.mcpServers.length,
+  };
+}
+
+function compareTasksByRecency(left: ShellTaskEntry, right: ShellTaskEntry): number {
+  return right.updatedAt.localeCompare(left.updatedAt);
+}
+
+function countTasksByStatus(tasks: ShellTaskEntry[]): Record<InteractionTaskStatus, number> {
+  const counts: Record<InteractionTaskStatus, number> = {
+    pending: 0,
+    running: 0,
+    awaiting_approval: 0,
+    completed: 0,
+    failed: 0,
+  };
+
+  for (const task of tasks) {
+    counts[task.status] += 1;
+  }
+
+  return counts;
+}
+
+export function selectTaskBoardSummary(state: ShellState): TaskBoardSummary {
+  const active = state.tasks
+    .filter((task) => isActiveTask(task))
+    .sort(compareTasksByRecency);
+  const queued = state.tasks.filter((task) => task.status === "pending").sort(compareTasksByRecency);
+  const finished = state.tasks
+    .filter((task) => task.status === "completed" || task.status === "failed")
+    .sort(compareTasksByRecency);
+
+  return {
+    sessionTitle: state.currentSession?.title ?? "No active session",
+    sessionStatus: state.currentSession?.status,
+    active,
+    queued,
+    finished,
+    counts: countTasksByStatus(state.tasks),
+    activeCount: active.length,
+    queuedCount: queued.length,
+    finishedCount: finished.length,
+    focusedTaskId: active[0]?.id ?? queued[0]?.id ?? finished[0]?.id,
   };
 }

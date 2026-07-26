@@ -13,7 +13,7 @@ export function StatusBar({ summary, capabilities }: StatusBarProps) {
       <Text>Status | scene: {summary.activeScene} | mode: {summary.mode ?? "normal"} | session: {summary.sessionStatus ?? "idle"}</Text>
       <Text dimColor>
         workspace: {summary.workspacePath || "n/a"} | approvals: {summary.pendingApprovalCount} | tasks:{" "}
-        {summary.runningTaskCount} | terminal: {capabilities.level}
+        {summary.activeTaskCount} | terminal: {capabilities.level}
       </Text>
     </Box>
   );
