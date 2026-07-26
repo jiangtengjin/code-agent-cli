@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import * as readline from "node:readline";
 import chalk from "chalk";
 import ora from "ora";
@@ -8,7 +9,7 @@ import { executeApprovedPlan, formatPlanState } from "../modes/plan.js";
 import { ModeRouter } from "../modes/router.js";
 import { createTaskTiming, formatTaskTiming } from "../session/execution.js";
 import { SessionPersistence } from "../session/persistence.js";
-import { createSessionSummary } from "../session/runtime.js";
+import { createSessionSummary, forkSessionState } from "../session/runtime.js";
 import { SessionStore } from "../session/store.js";
 import { UsageTracker, formatUsageSnapshot } from "../session/usage.js";
 import { resolveWorkspace } from "../session/workspace.js";
@@ -18,7 +19,7 @@ import type { Config } from "../types/config.js";
 import type { ChatMode } from "../types/mode.js";
 import type { PlanState } from "../types/plan.js";
 import type { LLMMessage, LLMToolCall, LLMUsage } from "../types/provider.js";
-import type { SessionState } from "../types/session.js";
+import type { SessionState, SessionSummary } from "../types/session.js";
 import type { ToolResult } from "../types/tool.js";
 import { maskApiKey } from "../utils/api-key.js";
 import { formatDuration } from "../utils/format.js";
@@ -115,6 +116,19 @@ export type SlashCompletion = {
 };
 
 const MODES: ChatMode[] = ["normal", "auto", "plan", "edit"];
+const MODE_NAMES: Record<ChatMode, string> = {
+  normal: "普通",
+  auto: "自动",
+  plan: "规划",
+  edit: "编辑",
+};
+const SESSION_STATUS_NAMES: Record<SessionSummary["status"], string> = {
+  idle: "空闲",
+  running: "执行中",
+  awaiting_plan_approval: "等待计划确认",
+  interrupted: "已中断",
+  archived: "已归档",
+};
 
 const COMMANDS: SlashCommand[] = [
   {
@@ -230,6 +244,26 @@ function getCommandMatches(query: string): SlashSuggestion[] {
         COMMANDS.findIndex((command) => command.name === a.value) -
           COMMANDS.findIndex((command) => command.name === b.value),
     );
+}
+
+function getModeName(mode: ChatMode): string {
+  return MODE_NAMES[mode];
+}
+
+function getSessionStatusName(status: SessionSummary["status"]): string {
+  return SESSION_STATUS_NAMES[status];
+}
+
+function logResumedSession(title: string): void {
+  console.log(chalk.green(`已恢复会话：${title}`));
+}
+
+function logForkedSession(title: string): void {
+  console.log(chalk.green(`已基于会话派生新分支：${title}`));
+}
+
+function logInterruptedSessionRestored(): void {
+  console.log(chalk.yellow("已恢复中断会话，请确认上下文后继续。"));
 }
 
 function getModeMatches(query: string): SlashSuggestion[] {
@@ -456,7 +490,7 @@ ${chalk.bold("可用命令:")}
 
     case "unarchive":
       if (!args.length) {
-        console.log(chalk.yellow("请提供要取消归档的会话 ID 或标题前缀"));
+        console.log(chalk.yellow("请提供要取消归档的会话编号或标题前缀"));
         break;
       }
       if (ctx.unarchiveSession) {
@@ -597,11 +631,21 @@ export type StartChatOptions = {
   resumeLast?: boolean;
   resumeAll?: boolean;
   resumeQuery?: string;
+  resumePicker?: boolean;
+  resumeFork?: boolean;
 };
 
 type InitialSessionLoadResult = {
+  resumedFromInterrupted: boolean;
+  session?: SessionState;
+  forkedFromTitle?: string;
+  notice?: string;
+};
+
+type ResolvedSessionLoadResult = {
   session: SessionState;
   resumedFromInterrupted: boolean;
+  forkedFromTitle?: string;
 };
 
 function isAbortError(error: unknown): boolean {
@@ -612,7 +656,7 @@ function isAbortError(error: unknown): boolean {
   return false;
 }
 
-function normalizeInterruptedSession(state: SessionState): InitialSessionLoadResult {
+function normalizeInterruptedSession(state: SessionState): ResolvedSessionLoadResult {
   if (state.status !== "interrupted") {
     return {
       session: state,
@@ -638,11 +682,80 @@ function normalizeInterruptedSession(state: SessionState): InitialSessionLoadRes
   };
 }
 
+function formatSessionListRow(summary: SessionSummary, index: number): string {
+  return [
+    `${index + 1}.`,
+    summary.title,
+    `状态：${getSessionStatusName(summary.status)}`,
+    `模式：${getModeName(summary.mode)}`,
+    `最后活跃：${summary.lastActiveAt}`,
+  ].join("  ");
+}
+
+function printSessionList(summaries: SessionSummary[], limit = 10): void {
+  for (const [index, summary] of summaries.slice(0, limit).entries()) {
+    console.log(formatSessionListRow(summary, index));
+  }
+}
+
+function askQuestion(rl: readline.Interface, question: string): Promise<string> {
+  return new Promise((resolve) => {
+    rl.question(question, resolve);
+  });
+}
+
+async function forkLoadedSession(
+  store: SessionStore,
+  source: SessionState,
+): Promise<SessionState> {
+  const now = new Date().toISOString();
+  const forked = forkSessionState(source, {
+    sessionId: randomUUID(),
+    now,
+  });
+
+  await store.saveSession(forked);
+  await store.appendEvent(forked.sessionId, {
+    type: "fork",
+    createdAt: now,
+    parentSessionId: source.sessionId,
+  });
+
+  return forked;
+}
+
+async function resolveSessionSummaryState(
+  store: SessionStore,
+  summary: SessionSummary,
+  options: Pick<StartChatOptions, "resumeFork">,
+): Promise<ResolvedSessionLoadResult | undefined> {
+  const state = await store.loadSession(summary.id);
+  if (!state) {
+    return undefined;
+  }
+
+  const normalized = normalizeInterruptedSession(state);
+  if (!options.resumeFork) {
+    return normalized;
+  }
+
+  const forked = await forkLoadedSession(store, normalized.session);
+  return {
+    session: forked,
+    resumedFromInterrupted: normalized.resumedFromInterrupted,
+    forkedFromTitle: state.title,
+  };
+}
+
 async function loadInitialSession(
   config: Config,
   options: StartChatOptions,
 ): Promise<InitialSessionLoadResult | undefined> {
   if (!config.sessions?.enabled || !config.sessions.storePath) {
+    return undefined;
+  }
+
+  if (options.resumePicker) {
     return undefined;
   }
 
@@ -663,11 +776,24 @@ async function loadInitialSession(
     : await store.findLatestSession(queryOptions);
 
   if (!summary) {
+    if (options.resumeQuery) {
+      return {
+        resumedFromInterrupted: false,
+        notice: `未找到会话：${options.resumeQuery}，将开始新会话。`,
+      };
+    }
+
+    if (options.continueLast || options.resumeLast) {
+      return {
+        resumedFromInterrupted: false,
+        notice: "当前工作区没有可恢复的会话，将开始新会话。",
+      };
+    }
+
     return undefined;
   }
 
-  const state = await store.loadSession(summary.id);
-  return state ? normalizeInterruptedSession(state) : undefined;
+  return resolveSessionSummaryState(store, summary, options);
 }
 
 export async function runPrompt(config: Config, prompt: string): Promise<void> {
@@ -864,14 +990,89 @@ export async function startChat(
     const summary = createSessionSummary(state);
     console.log(
       [
-        `Session ID: ${summary.id}`,
-        `Title: ${summary.title}`,
-        `Status: ${summary.status}`,
-        `Mode: ${summary.mode}`,
-        `Workspace: ${summary.workspacePath}`,
-        `Turns: ${summary.turnCount}`,
+        `会话编号：${summary.id}`,
+        `标题：${summary.title}`,
+        `状态：${getSessionStatusName(summary.status)}`,
+        `模式：${getModeName(summary.mode)}`,
+        `工作区：${summary.workspacePath}`,
+        `轮次：${summary.turnCount}`,
       ].join("\n"),
     );
+  }
+
+  async function restoreSessionSummary(summary: SessionSummary, announce = true): Promise<boolean> {
+    if (!sessionStore) {
+      return false;
+    }
+
+    const resolved = await resolveSessionSummaryState(sessionStore, summary, {
+      resumeFork: false,
+    });
+    if (!resolved) {
+      return false;
+    }
+
+    applySessionState(resolved.session);
+
+    if (announce) {
+      logResumedSession(summary.title);
+      if (resolved.resumedFromInterrupted) {
+        logInterruptedSessionRestored();
+      }
+    }
+
+    return true;
+  }
+
+  async function runResumePicker(): Promise<void> {
+    if (!options.resumePicker || !sessionStore) {
+      return;
+    }
+
+    const workspace = await resolveWorkspace(process.cwd());
+    const sessions = await sessionStore.listSessions({
+      workspaceKey: options.resumeAll ? undefined : workspace.key,
+      kind: "interactive",
+    });
+
+    if (sessions.length === 0) {
+      console.log(chalk.yellow("当前没有可恢复的会话"));
+      return;
+    }
+
+    printSessionList(sessions);
+    const answer = (
+      await askQuestion(rl, "请选择要恢复的会话编号（直接回车取消）：")
+    ).trim();
+
+    if (!answer) {
+      console.log(chalk.yellow("已取消恢复会话"));
+      return;
+    }
+
+    const selection = Number.parseInt(answer, 10);
+    const maxSelection = Math.min(sessions.length, 10);
+    if (!Number.isInteger(selection) || selection < 1 || selection > maxSelection) {
+      console.log(chalk.yellow(`无效的会话编号：${answer}`));
+      return;
+    }
+
+    const summary = sessions[selection - 1];
+    const resolved = await resolveSessionSummaryState(sessionStore, summary, options);
+    if (!resolved) {
+      console.log(chalk.yellow(`无法加载会话：${summary.id}`));
+      return;
+    }
+
+    applySessionState(resolved.session);
+    if (resolved.forkedFromTitle) {
+      logForkedSession(resolved.forkedFromTitle);
+    } else {
+      logResumedSession(summary.title);
+    }
+    if (resolved.resumedFromInterrupted) {
+      logInterruptedSessionRestored();
+    }
   }
 
   async function resumeSessionFromSlash(query?: string): Promise<void> {
@@ -892,10 +1093,7 @@ export async function startChat(
         return;
       }
 
-      const rows = sessions
-        .slice(0, 10)
-        .map((session, index) => `${index + 1}. ${session.id}  ${session.title}`);
-      console.log(rows.join("\n"));
+      printSessionList(sessions);
       return;
     }
 
@@ -905,18 +1103,17 @@ export async function startChat(
     });
 
     if (!summary) {
-      console.log(chalk.yellow(`未找到会话: ${query}`));
+      console.log(chalk.yellow(`未找到会话：${query}`));
       return;
     }
 
-    const state = await sessionStore.loadSession(summary.id);
-    if (!state) {
-      console.log(chalk.yellow(`无法加载会话: ${summary.id}`));
+    const restored = await restoreSessionSummary(summary, false);
+    if (!restored) {
+      console.log(chalk.yellow(`无法加载会话：${summary.id}`));
       return;
     }
 
-    applySessionState(state);
-    console.log(chalk.green(`已恢复会话: ${summary.title}`));
+    logResumedSession(summary.title);
   }
 
   async function archiveCurrentSession(): Promise<void> {
@@ -927,7 +1124,7 @@ export async function startChat(
     }
 
     resetRuntimeState();
-    console.log(chalk.green(`已归档当前会话: ${archived.title}`));
+    console.log(chalk.green(`已归档当前会话：${archived.title}`));
   }
 
   async function forkCurrentSession(name?: string): Promise<void> {
@@ -942,7 +1139,7 @@ export async function startChat(
     usageTracker.restore(forked.usage);
     costTracker.restore(forked.cost);
     mode = forked.mode;
-    console.log(chalk.green(`已创建会话分支: ${forked.title}`));
+    console.log(chalk.green(`已创建会话分支：${forked.title}`));
   }
 
   async function unarchiveSession(query: string): Promise<void> {
@@ -959,7 +1156,7 @@ export async function startChat(
     });
 
     if (!summary || summary.status !== "archived") {
-      console.log(chalk.yellow(`未找到已归档会话: ${query}`));
+      console.log(chalk.yellow(`未找到已归档会话：${query}`));
       return;
     }
 
@@ -1223,7 +1420,7 @@ export async function startChat(
       exitRequested = true;
       exitCode = 130;
       activeRun.spinner.stop();
-      console.log(chalk.yellow("Interrupt received again. Exiting after persisting the session state."));
+      console.log(chalk.yellow("再次收到中断信号，已持久化会话状态，正在退出。"));
       void persistence
         .updateStatus("interrupted", "ctrl_c")
         .catch(() => undefined)
@@ -1414,11 +1611,7 @@ export async function startChat(
           await resetInterruptedPlanState();
           await persistence.updateStatus("interrupted", "ctrl_c");
           spinner.stop();
-          console.log(
-            chalk.yellow(
-              "Current execution was interrupted. The session was preserved and can be resumed.",
-            ),
-          );
+          console.log(chalk.yellow("当前执行已中断，会话已保留，可稍后继续恢复。"));
         } else {
           await persistence.updateStatus("idle");
           spinner.stop();
@@ -1438,15 +1631,21 @@ export async function startChat(
     });
   });
 
+  await runSetup(() => runResumePicker());
+
+  if (initialSessionLoad?.forkedFromTitle) {
+    logForkedSession(initialSessionLoad.forkedFromTitle);
+  }
+  if (initialSessionLoad?.resumedFromInterrupted) {
+    logInterruptedSessionRestored();
+  }
+  if (initialSessionLoad?.notice) {
+    console.log(chalk.yellow(initialSessionLoad.notice));
+  }
+
   await runSetup(() => {
     promptNextInput();
   });
-
-  if (initialSessionLoad?.resumedFromInterrupted) {
-    console.log(
-      chalk.yellow("Restored an interrupted session. Review the context and continue when ready."),
-    );
-  }
 
   await runSetup(() => {
     rl.on("close", async () => {

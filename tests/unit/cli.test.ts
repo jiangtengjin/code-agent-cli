@@ -157,6 +157,8 @@ describe("CLI command framework", () => {
       resumeLast: true,
       resumeAll: false,
       resumeQuery: undefined,
+      resumePicker: false,
+      resumeFork: false,
     });
   });
 
@@ -172,6 +174,42 @@ describe("CLI command framework", () => {
       resumeLast: false,
       resumeAll: true,
       resumeQuery: "fix-auth-timeout",
+      resumePicker: false,
+      resumeFork: false,
+    });
+  });
+
+  it("opens the resume selector when no query is provided", async () => {
+    const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
+    cliMocks.resolve.mockResolvedValue(config);
+    const program = createProgram();
+
+    await program.parseAsync(["resume"], { from: "user" });
+
+    expect(cliMocks.startChat).toHaveBeenCalledWith(config, {
+      continueLast: false,
+      resumeLast: false,
+      resumeAll: false,
+      resumeQuery: undefined,
+      resumePicker: true,
+      resumeFork: false,
+    });
+  });
+
+  it("forks from the matched session when resume --fork is provided", async () => {
+    const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
+    cliMocks.resolve.mockResolvedValue(config);
+    const program = createProgram();
+
+    await program.parseAsync(["resume", "fix-auth-timeout", "--fork"], { from: "user" });
+
+    expect(cliMocks.startChat).toHaveBeenCalledWith(config, {
+      continueLast: false,
+      resumeLast: false,
+      resumeAll: false,
+      resumeQuery: "fix-auth-timeout",
+      resumePicker: false,
+      resumeFork: true,
     });
   });
 
