@@ -4,6 +4,11 @@ import chalk from "chalk";
 import ora from "ora";
 import { InteractionEventBridge } from "../interaction/bridge.js";
 import { InteractionEventEmitter } from "../interaction/emitter.js";
+import {
+  createConfirmToolCallWithInteraction,
+  createTrackedMessagesHandler,
+  toToolCall,
+} from "../interaction/runtime.js";
 import { CostTracker, formatCostSnapshot } from "../llm/cost-tracker.js";
 import type { LLMProvider } from "../llm/provider.js";
 import { createProviderFromConfig } from "../llm/registry.js";
@@ -22,7 +27,7 @@ import type { ChatMode } from "../types/mode.js";
 import type { PlanState } from "../types/plan.js";
 import type { LLMMessage, LLMToolCall, LLMUsage } from "../types/provider.js";
 import type { SessionState, SessionSummary } from "../types/session.js";
-import type { ToolCall, ToolResult } from "../types/tool.js";
+import type { ToolResult } from "../types/tool.js";
 import { maskApiKey } from "../utils/api-key.js";
 import { formatDuration } from "../utils/format.js";
 import { isSensitivePath } from "../utils/security.js";
@@ -586,68 +591,6 @@ function userConfirm(toolCall: LLMToolCall, rl: readline.Interface): Promise<boo
 
 function createInteractionBridge(): InteractionEventBridge {
   return new InteractionEventBridge(new InteractionEventEmitter());
-}
-
-function toToolCall(toolCall: LLMToolCall): ToolCall {
-  return {
-    id: toolCall.id,
-    name: toolCall.name,
-    args: toolCall.args,
-  };
-}
-
-function createApprovalSummary(toolCall: LLMToolCall): string {
-  try {
-    return JSON.stringify(toolCall.args);
-  } catch {
-    return toolCall.name;
-  }
-}
-
-function createTrackedMessagesHandler(
-  interaction: InteractionEventBridge,
-  persist: (messages: LLMMessage[]) => Promise<void> | void,
-  initialCount = 0,
-): {
-  handleMessagesChanged: (messages: LLMMessage[]) => Promise<void>;
-  setTrackedCount: (count: number) => void;
-} {
-  let trackedCount = initialCount;
-
-  return {
-    async handleMessagesChanged(nextMessages: LLMMessage[]) {
-      await persist(nextMessages);
-
-      const startIndex = Math.min(trackedCount, nextMessages.length);
-      for (const message of nextMessages.slice(startIndex)) {
-        interaction.messageAdded(message);
-      }
-      trackedCount = nextMessages.length;
-    },
-    setTrackedCount(count: number) {
-      trackedCount = Math.max(count, 0);
-    },
-  };
-}
-
-function createConfirmToolCallWithInteraction(
-  interaction: InteractionEventBridge,
-  delegate: (toolCall: LLMToolCall) => Promise<boolean>,
-): (toolCall: LLMToolCall) => Promise<boolean> {
-  return async (toolCall: LLMToolCall) => {
-    interaction.approvalRequested({
-      id: toolCall.id,
-      toolCall: toToolCall(toolCall),
-      title: `Confirm ${toolCall.name}`,
-      summary: createApprovalSummary(toolCall),
-      risk: "high",
-      workingDirectory: process.cwd(),
-    });
-
-    const approved = await delegate(toolCall);
-    interaction.approvalResolved(toolCall.id, approved ? "approved_once" : "rejected");
-    return approved;
-  };
 }
 
 const CHAT_PROMPT = chalk.dim("│ ") + chalk.cyan("❯ ");

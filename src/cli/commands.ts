@@ -41,11 +41,17 @@ export function createProgram(): Command {
 
       const { ConfigResolver } = await import("../config/resolver.js");
       const { runPrompt, startChat } = await import("./chat.js");
+      const { startInteractiveShell } = await import("../tui/bootstrap.js");
       const resolver = new ConfigResolver();
       const config = await resolver.resolve(options);
 
       if (options.prompt) {
         await runPrompt(config, options.prompt);
+        return;
+      }
+
+      if (!options.continue) {
+        await startInteractiveShell(config);
         return;
       }
 

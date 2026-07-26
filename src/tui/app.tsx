@@ -14,6 +14,7 @@ export interface TUIAppProps {
   capabilities: TerminalCapabilities;
   shellState?: ShellState;
   shellStore?: Pick<ShellStore, "getState" | "subscribe" | "navigate">;
+  onSubmitTask?: (input: string) => Promise<unknown> | unknown;
 }
 
 function renderScene(state: ShellState) {
@@ -32,12 +33,19 @@ function subscribeNoop(): () => void {
   return () => undefined;
 }
 
-export function TUIApp({ scene = "home", capabilities, shellState, shellStore }: TUIAppProps) {
+export function TUIApp({
+  scene = "home",
+  capabilities,
+  shellState,
+  shellStore,
+  onSubmitTask,
+}: TUIAppProps) {
   const fallbackState = shellState ?? createInitialShellState({ activeScene: scene });
   const [composerDraft, setComposerDraft] = useState("");
   const [composerNote, setComposerNote] = useState<string | undefined>();
   const { stdin, setRawMode } = useStdin();
   const composerDraftRef = useRef(composerDraft);
+  const isMountedRef = useRef(true);
   const state = useSyncExternalStore(
     shellStore
       ? (onStoreChange) =>
@@ -52,6 +60,12 @@ export function TUIApp({ scene = "home", capabilities, shellState, shellStore }:
   useEffect(() => {
     composerDraftRef.current = composerDraft;
   }, [composerDraft]);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useLayoutEffect(() => {
     const supportsManagedRawMode =
@@ -99,6 +113,29 @@ export function TUIApp({ scene = "home", capabilities, shellState, shellStore }:
           return;
         }
 
+        if (onSubmitTask) {
+          shellStore?.navigate("chat");
+          setComposerDraft("");
+          setComposerNote("executing task...");
+          Promise.resolve(onSubmitTask(draft))
+            .then(() => {
+              if (!isMountedRef.current) {
+                return;
+              }
+              setComposerNote(undefined);
+            })
+            .catch((error: unknown) => {
+              if (!isMountedRef.current) {
+                return;
+              }
+              if (!composerDraftRef.current) {
+                setComposerDraft(draft);
+              }
+              setComposerNote(error instanceof Error ? error.message : String(error));
+            });
+          return;
+        }
+
         setComposerNote("task execution bridge pending");
         return;
       }
@@ -129,7 +166,7 @@ export function TUIApp({ scene = "home", capabilities, shellState, shellStore }:
     return () => {
       stdin.removeListener("data", handleData);
     };
-  }, [shellStore, stdin]);
+  }, [onSubmitTask, shellStore, stdin]);
 
   return (
     <Box flexDirection="column">

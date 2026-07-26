@@ -5,6 +5,7 @@ const cliMocks = vi.hoisted(() => ({
   resolve: vi.fn(),
   runPrompt: vi.fn(),
   startChat: vi.fn(),
+  startInteractiveShell: vi.fn(),
 }));
 
 const mcpMocks = vi.hoisted(() => ({
@@ -22,6 +23,10 @@ vi.mock("../../src/config/resolver.js", () => ({
 vi.mock("../../src/cli/chat.js", () => ({
   runPrompt: cliMocks.runPrompt,
   startChat: cliMocks.startChat,
+}));
+
+vi.mock("../../src/tui/bootstrap.js", () => ({
+  startInteractiveShell: cliMocks.startInteractiveShell,
 }));
 
 vi.mock("../../src/cli/mcp.js", () => ({
@@ -131,6 +136,18 @@ describe("CLI command framework", () => {
     expect(cliMocks.resolve).toHaveBeenCalledWith(expect.objectContaining({ prompt: "hello" }));
     expect(cliMocks.runPrompt).toHaveBeenCalledWith(config, "hello");
     expect(cliMocks.startChat).not.toHaveBeenCalled();
+    expect(cliMocks.startInteractiveShell).not.toHaveBeenCalled();
+  });
+
+  it("starts the interactive shell for the default command without resume flags", async () => {
+    const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
+    cliMocks.resolve.mockResolvedValue(config);
+    const program = createProgram();
+
+    await program.parseAsync([], { from: "user" });
+
+    expect(cliMocks.startInteractiveShell).toHaveBeenCalledWith(config);
+    expect(cliMocks.startChat).not.toHaveBeenCalled();
   });
 
   it("passes the continue intent to interactive chat startup", async () => {
@@ -143,6 +160,7 @@ describe("CLI command framework", () => {
     expect(cliMocks.startChat).toHaveBeenCalledWith(config, {
       continueLast: true,
     });
+    expect(cliMocks.startInteractiveShell).not.toHaveBeenCalled();
   });
 
   it("resumes the latest session from the resume subcommand", async () => {

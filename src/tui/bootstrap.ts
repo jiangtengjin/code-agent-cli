@@ -1,9 +1,10 @@
 import { render } from "ink";
 import React from "react";
-import type { InteractionEventEmitter } from "../interaction/emitter.js";
+import { InteractionEventEmitter } from "../interaction/emitter.js";
 import { type StartChatOptions, startChat } from "../cli/chat.js";
 import type { Config } from "../types/config.js";
 import { TUIApp, type TUIAppProps } from "./app.js";
+import { createTUIChatController, type TUIChatController } from "./adapters/chat-controller.js";
 import { detectTerminalCapabilities } from "./capabilities.js";
 import { createShellStore, type CreateShellStoreOptions, type ShellStore } from "./shell/store.js";
 import type { TUIScene, TerminalCapabilities } from "./types.js";
@@ -22,7 +23,13 @@ export interface InteractiveShellDependencies {
   startPlainChat?: typeof startChat;
   renderApp?: (props: TUIAppProps) => unknown | Promise<unknown>;
   createShellStore?: (options: CreateShellStoreOptions) => ShellStore;
-  interactionEventSource?: Pick<InteractionEventEmitter, "on">;
+  createChatController?: (
+    config: Config,
+    dependencies: {
+      eventEmitter: InteractionEventEmitter;
+    },
+  ) => TUIChatController;
+  interactionEventSource?: InteractionEventEmitter;
 }
 
 export interface InteractiveShellResult {
@@ -62,13 +69,25 @@ export async function startInteractiveShell(
 
   const renderApp = dependencies.renderApp ?? renderTUIApp;
   const createStore = dependencies.createShellStore ?? createShellStore;
+  const interactionEventSource = dependencies.interactionEventSource ?? new InteractionEventEmitter();
   const shellStore = createStore({
     initialState: {
       activeScene: scene,
     },
-    emitter: dependencies.interactionEventSource,
+    emitter: interactionEventSource,
   });
-  await Promise.resolve(renderApp({ scene, capabilities, shellStore }));
+  const createChatController = dependencies.createChatController ?? createTUIChatController;
+  const chatController = createChatController(config, {
+    eventEmitter: interactionEventSource,
+  });
+  await Promise.resolve(
+    renderApp({
+      scene,
+      capabilities,
+      shellStore,
+      onSubmitTask: (input) => chatController.submitTask(input),
+    }),
+  );
 
   return {
     renderer: "ink",

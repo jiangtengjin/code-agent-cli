@@ -1,6 +1,6 @@
 import { render } from "ink-testing-library";
 import React from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createInteractionEvent } from "../../../src/interaction/events.js";
 import { TUIApp } from "../../../src/tui/app.js";
 import { createInteractionEventAction, createSceneChangedAction } from "../../../src/tui/shell/actions.js";
@@ -265,6 +265,107 @@ describe("TUIApp", () => {
     expect(result.lastFrame()).toContain("> Approvals");
     expect(result.lastFrame()).toContain("Approvals scene bootstrap pending");
     expect(result.lastFrame()).not.toContain("draft: /goto approvals");
+    result.unmount();
+    store.dispose();
+  });
+
+  it("submits composer tasks, switches to chat, and clears the draft", async () => {
+    const store = createShellStore();
+    const onSubmitTask = vi.fn(async () => undefined);
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: {
+          level: "full",
+          isTTY: true,
+          supportsAltScreen: true,
+          supportsColor: true,
+          reason: "interactive-terminal",
+        },
+        shellStore: store,
+        onSubmitTask,
+      }),
+    );
+
+    result.stdin.write("build unified tui");
+    result.stdin.write("\r");
+    await flushInput();
+
+    expect(onSubmitTask).toHaveBeenCalledWith("build unified tui");
+    expect(result.lastFrame()).toContain("Current scene: chat");
+    expect(result.lastFrame()).not.toContain("draft: build unified tui");
+    result.unmount();
+    store.dispose();
+  });
+
+  it("restores the submitted draft when task execution fails", async () => {
+    const store = createShellStore();
+    const onSubmitTask = vi.fn(async () => {
+      throw new Error("controller busy");
+    });
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: {
+          level: "full",
+          isTTY: true,
+          supportsAltScreen: true,
+          supportsColor: true,
+          reason: "interactive-terminal",
+        },
+        shellStore: store,
+        onSubmitTask,
+      }),
+    );
+
+    result.stdin.write("retry task");
+    result.stdin.write("\r");
+    await flushInput();
+    await flushInput();
+
+    expect(onSubmitTask).toHaveBeenCalledWith("retry task");
+    expect(result.lastFrame()).toContain("draft: retry task");
+    expect(result.lastFrame()).toContain("controller busy");
+    result.unmount();
+    store.dispose();
+  });
+
+  it("does not overwrite a new draft if execution fails after the user keeps typing", async () => {
+    const store = createShellStore();
+    let rejectTask = () => undefined;
+    const onSubmitTask = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectTask = () => {
+            reject(new Error("controller busy"));
+          };
+        }),
+    );
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: {
+          level: "full",
+          isTTY: true,
+          supportsAltScreen: true,
+          supportsColor: true,
+          reason: "interactive-terminal",
+        },
+        shellStore: store,
+        onSubmitTask,
+      }),
+    );
+
+    result.stdin.write("retry task");
+    result.stdin.write("\r");
+    await flushInput();
+
+    result.stdin.write("next task");
+    await flushInput();
+
+    rejectTask();
+    await flushInput();
+    await flushInput();
+
+    expect(result.lastFrame()).toContain("draft: next task");
+    expect(result.lastFrame()).toContain("controller busy");
     result.unmount();
     store.dispose();
   });

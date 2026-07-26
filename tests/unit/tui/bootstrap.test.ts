@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { startInteractiveShell } from "../../../src/tui/bootstrap.js";
 import type { ShellStore } from "../../../src/tui/shell/store.js";
+import type { TUIChatController } from "../../../src/tui/adapters/chat-controller.js";
 import type { Config } from "../../../src/types/config.js";
 
 const config: Config = {
@@ -45,6 +46,12 @@ describe("startInteractiveShell", () => {
   it("renders the ink app when the terminal supports tui mode", async () => {
     const renderApp = vi.fn();
     const startPlainChat = vi.fn();
+    const submitTask = vi.fn(async () => undefined);
+    const createChatController = vi.fn(
+      (): TUIChatController => ({
+        submitTask,
+      }),
+    );
     const shellStore: ShellStore = {
       getState: vi.fn(() => ({
         activeScene: "home",
@@ -79,6 +86,7 @@ describe("startInteractiveShell", () => {
         startPlainChat,
         renderApp,
         createShellStore,
+        createChatController,
       },
     );
 
@@ -86,7 +94,7 @@ describe("startInteractiveShell", () => {
       initialState: {
         activeScene: "home",
       },
-      emitter: undefined,
+      emitter: expect.anything(),
     });
     expect(renderApp).toHaveBeenCalledWith({
       scene: "home",
@@ -98,8 +106,15 @@ describe("startInteractiveShell", () => {
         reason: "interactive-terminal",
       },
       shellStore,
+      onSubmitTask: expect.any(Function),
     });
     expect(startPlainChat).not.toHaveBeenCalled();
+    expect(createChatController).toHaveBeenCalledWith(config, {
+      eventEmitter: expect.anything(),
+    });
+    const [{ onSubmitTask }] = renderApp.mock.calls[0];
+    await onSubmitTask("ship it");
+    expect(submitTask).toHaveBeenCalledWith("ship it");
     expect(result.renderer).toBe("ink");
     expect(result.scene).toBe("home");
   });
