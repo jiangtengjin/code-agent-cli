@@ -1,0 +1,224 @@
+import { describe, expect, it } from "vitest";
+import { createInteractionEvent } from "../../../../src/interaction/events.js";
+import { createInteractionEventAction, createSceneChangedAction } from "../../../../src/tui/shell/actions.js";
+import { reduceShellState } from "../../../../src/tui/shell/reducer.js";
+import {
+  createInitialShellState,
+  selectInspectorSummary,
+  selectRailItems,
+  selectStatusBarSummary,
+} from "../../../../src/tui/shell/state.js";
+
+describe("shell state selectors", () => {
+  it("derives the status bar summary from shell state", () => {
+    const state = [
+      createInteractionEvent(
+        "session.changed",
+        {
+          summary: {
+            id: "session-3",
+            kind: "interactive",
+            title: "Live TUI shell",
+            workspaceKey: "workspace-a",
+            workspacePath: "D:/JAVA/code-agent-cli",
+            status: "running",
+            mode: "plan",
+            createdAt: "2026-07-26T14:00:00.000Z",
+            updatedAt: "2026-07-26T14:04:00.000Z",
+            lastActiveAt: "2026-07-26T14:04:00.000Z",
+            turnCount: 6,
+          },
+        },
+        "2026-07-26T14:00:30.000Z",
+      ),
+      createInteractionEvent(
+        "approval.requested",
+        {
+          request: {
+            id: "approval-1",
+            toolCall: {
+              id: "tool-1",
+              name: "write_file",
+              args: {},
+            },
+            title: "Approve file write",
+            summary: "Write the shell layout",
+            risk: "high",
+          },
+        },
+        "2026-07-26T14:01:00.000Z",
+      ),
+      createInteractionEvent(
+        "task.updated",
+        {
+          task: {
+            id: "task-1",
+            title: "Implement shell frame",
+            status: "running",
+            mode: "plan",
+          },
+        },
+        "2026-07-26T14:02:00.000Z",
+      ),
+    ].reduce(
+      (currentState, event) => reduceShellState(currentState, createInteractionEventAction(event)),
+      reduceShellState(createInitialShellState(), createSceneChangedAction("chat")),
+    );
+
+    expect(selectStatusBarSummary(state)).toMatchObject({
+      activeScene: "chat",
+      mode: "plan",
+      sessionStatus: "running",
+      workspacePath: "D:/JAVA/code-agent-cli",
+      pendingApprovalCount: 1,
+      runningTaskCount: 1,
+      lastEventAt: "2026-07-26T14:02:00.000Z",
+    });
+  });
+
+  it("derives rail badges and inspector context from shell state", () => {
+    const state = [
+      createInteractionEvent(
+        "session.changed",
+        {
+          summary: {
+            id: "session-4",
+            kind: "interactive",
+            title: "Shell inspector context",
+            workspaceKey: "workspace-a",
+            workspacePath: "D:/JAVA/code-agent-cli",
+            status: "running",
+            mode: "normal",
+            createdAt: "2026-07-26T14:10:00.000Z",
+            updatedAt: "2026-07-26T14:15:00.000Z",
+            lastActiveAt: "2026-07-26T14:15:00.000Z",
+            turnCount: 9,
+            latestUserPreview: "Continue the shell work",
+            latestAssistantPreview: "Rendering the inspector",
+          },
+        },
+        "2026-07-26T14:10:30.000Z",
+      ),
+      createInteractionEvent(
+        "tool.finished",
+        {
+          toolCall: {
+            id: "tool-2",
+            name: "shell_command",
+            args: {
+              command: "pnpm test",
+            },
+          },
+          result: {
+            success: true,
+          },
+        },
+        "2026-07-26T14:11:00.000Z",
+      ),
+      createInteractionEvent(
+        "approval.requested",
+        {
+          request: {
+            id: "approval-2",
+            toolCall: {
+              id: "tool-3",
+              name: "git commit",
+              args: {},
+            },
+            title: "Approve commit",
+            summary: "Create the shell layout commit",
+            risk: "medium",
+          },
+        },
+        "2026-07-26T14:12:00.000Z",
+      ),
+      createInteractionEvent(
+        "review.findings.ready",
+        {
+          findings: [
+            {
+              id: "finding-1",
+              severity: "high",
+              title: "Missing live composer",
+              summary: "Composer section still needs input plumbing",
+            },
+          ],
+        },
+        "2026-07-26T14:13:00.000Z",
+      ),
+      createInteractionEvent(
+        "config.validation.updated",
+        {
+          validation: {
+            status: "invalid",
+            issues: [
+              {
+                path: "model.provider",
+                message: "Unknown provider",
+                severity: "error",
+              },
+            ],
+          },
+        },
+        "2026-07-26T14:14:00.000Z",
+      ),
+      createInteractionEvent(
+        "mcp.health.updated",
+        {
+          servers: [
+            {
+              serverName: "filesystem",
+              status: "healthy",
+              toolCount: 4,
+            },
+            {
+              serverName: "github",
+              status: "degraded",
+              toolCount: 2,
+            },
+          ],
+        },
+        "2026-07-26T14:15:00.000Z",
+      ),
+      createInteractionEvent(
+        "resume.loaded",
+        {
+          sessionId: "session-4",
+          resumedFromInterrupted: true,
+        },
+        "2026-07-26T14:15:30.000Z",
+      ),
+    ].reduce(
+      (currentState, event) => reduceShellState(currentState, createInteractionEventAction(event)),
+      createInitialShellState(),
+    );
+
+    const railItems = selectRailItems(state);
+    const inspector = selectInspectorSummary(state);
+
+    expect(railItems.find((item) => item.scene === "home")).toMatchObject({
+      isActive: true,
+      label: "Home",
+    });
+    expect(railItems.find((item) => item.scene === "approvals")).toMatchObject({
+      badge: "1",
+    });
+    expect(railItems.find((item) => item.scene === "review")).toMatchObject({
+      badge: "1",
+    });
+    expect(inspector).toMatchObject({
+      sessionTitle: "Shell inspector context",
+      sessionId: "session-4",
+      latestUserPreview: "Continue the shell work",
+      latestAssistantPreview: "Rendering the inspector",
+      latestToolName: "shell_command",
+      latestToolStatus: "completed",
+      lastResumeSessionId: "session-4",
+      reviewFindingCount: 1,
+      configStatus: "invalid",
+      configIssueCount: 1,
+      healthyMcpServerCount: 1,
+      totalMcpServerCount: 2,
+    });
+  });
+});

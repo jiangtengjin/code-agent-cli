@@ -57,6 +57,18 @@ describe("TUIApp", () => {
         },
         "2026-07-26T12:01:00.000Z",
       ),
+      createInteractionEvent(
+        "task.updated",
+        {
+          task: {
+            id: "task-1",
+            title: "Build shell frame",
+            status: "running",
+            mode: "normal",
+          },
+        },
+        "2026-07-26T12:01:15.000Z",
+      ),
     ].reduce(
       (state, event) => reduceShellState(state, createInteractionEventAction(event)),
       createInitialShellState(),
@@ -77,7 +89,14 @@ describe("TUIApp", () => {
 
     expect(result.lastFrame()).toContain("Code Agent CLI");
     expect(result.lastFrame()).toContain("Current scene: home");
-    expect(result.lastFrame()).toContain("Session: Build unified shell");
+    expect(result.lastFrame()).toContain("Status");
+    expect(result.lastFrame()).toContain("workspace: D:/JAVA/code-agent-cli");
+    expect(result.lastFrame()).toContain("Rail");
+    expect(result.lastFrame()).toContain("> Home");
+    expect(result.lastFrame()).toContain("Inspector");
+    expect(result.lastFrame()).toContain("session: Build unified shell");
+    expect(result.lastFrame()).toContain("Composer");
+    expect(result.lastFrame()).toContain("Type a task or /goto <scene>");
     expect(result.lastFrame()).toContain("Pending approvals: 1");
     result.unmount();
   });
@@ -143,6 +162,7 @@ describe("TUIApp", () => {
     );
 
     expect(result.lastFrame()).toContain("Current scene: chat");
+    expect(result.lastFrame()).toContain("> Chat");
     expect(result.lastFrame()).toContain("Chat");
     expect(result.lastFrame()).toContain("user: Render the chat scene");
     expect(result.lastFrame()).toContain("shell_command [completed]");

@@ -1,6 +1,7 @@
 import type {
   ApprovalRequest,
   ApprovalResolution,
+  ConfigValidationStatus,
   ConfigValidationSnapshot,
   InteractionTaskSnapshot,
   InteractionTaskStatus,
@@ -11,6 +12,7 @@ import type { LLMMessage } from "../../types/provider.js";
 import type { SessionStatus, SessionSummary } from "../../types/session.js";
 import type { ToolCall, ToolResult } from "../../types/tool.js";
 import type { TUIScene } from "../types.js";
+import { SCENE_LABELS, SHELL_SCENES } from "./router.js";
 
 export interface ShellMessageEntry {
   id: string;
@@ -93,6 +95,38 @@ export interface HomeSummary {
   taskCounts: Record<InteractionTaskStatus, number>;
 }
 
+export interface StatusBarSummary {
+  activeScene: TUIScene;
+  mode?: SessionSummary["mode"];
+  sessionStatus?: SessionStatus;
+  workspacePath: string;
+  pendingApprovalCount: number;
+  runningTaskCount: number;
+  lastEventAt?: string;
+}
+
+export interface RailItemSummary {
+  scene: TUIScene;
+  label: string;
+  isActive: boolean;
+  badge?: string;
+}
+
+export interface InspectorSummary {
+  sessionTitle: string;
+  sessionId?: string;
+  latestUserPreview?: string;
+  latestAssistantPreview?: string;
+  latestToolName?: string;
+  latestToolStatus?: ShellToolStatus;
+  lastResumeSessionId?: string;
+  reviewFindingCount: number;
+  configStatus: ConfigValidationStatus;
+  configIssueCount: number;
+  healthyMcpServerCount: number;
+  totalMcpServerCount: number;
+}
+
 const DEFAULT_CONFIG_VALIDATION: ConfigValidationSnapshot = {
   status: "idle",
   issues: [],
@@ -158,5 +192,72 @@ export function selectHomeSummary(state: ShellState): HomeSummary {
     reviewFindingCount: state.reviewFindings.length,
     lastResumeSessionId: state.resume?.sessionId,
     taskCounts,
+  };
+}
+
+export function selectStatusBarSummary(state: ShellState): StatusBarSummary {
+  return {
+    activeScene: state.activeScene,
+    mode: state.currentSession?.mode,
+    sessionStatus: state.currentSession?.status,
+    workspacePath: state.currentSession?.workspacePath ?? "",
+    pendingApprovalCount: state.approvals.items.filter((approval) => approval.status === "pending")
+      .length,
+    runningTaskCount: state.tasks.filter((task) => task.status === "running").length,
+    lastEventAt: state.lastEventAt,
+  };
+}
+
+export function selectRailItems(state: ShellState): RailItemSummary[] {
+  const pendingApprovals = state.approvals.items.filter((approval) => approval.status === "pending")
+    .length;
+  const reviewFindings = state.reviewFindings.length;
+  const configIssues = state.configValidation.issues.length;
+  const taskCount = state.tasks.filter((task) => task.status === "running").length;
+  const mcpServerCount = state.mcpServers.length;
+  const hasResume = state.resume ? "1" : undefined;
+
+  return SHELL_SCENES.map((scene) => {
+    let badge: string | undefined;
+    if (scene === "approvals" && pendingApprovals > 0) {
+      badge = String(pendingApprovals);
+    } else if (scene === "review" && reviewFindings > 0) {
+      badge = String(reviewFindings);
+    } else if (scene === "settings" && configIssues > 0) {
+      badge = String(configIssues);
+    } else if (scene === "tasks" && taskCount > 0) {
+      badge = String(taskCount);
+    } else if (scene === "mcp" && mcpServerCount > 0) {
+      badge = String(mcpServerCount);
+    } else if (scene === "resume" && hasResume) {
+      badge = hasResume;
+    }
+
+    return {
+      scene,
+      label: SCENE_LABELS[scene],
+      isActive: state.activeScene === scene,
+      badge,
+    };
+  });
+}
+
+export function selectInspectorSummary(state: ShellState): InspectorSummary {
+  const latestTool = state.chat.tools[state.chat.tools.length - 1];
+  const healthyMcpServerCount = state.mcpServers.filter((server) => server.status === "healthy").length;
+
+  return {
+    sessionTitle: state.currentSession?.title ?? "No active session",
+    sessionId: state.currentSession?.id,
+    latestUserPreview: state.currentSession?.latestUserPreview,
+    latestAssistantPreview: state.currentSession?.latestAssistantPreview,
+    latestToolName: latestTool?.name,
+    latestToolStatus: latestTool?.status,
+    lastResumeSessionId: state.resume?.sessionId,
+    reviewFindingCount: state.reviewFindings.length,
+    configStatus: state.configValidation.status,
+    configIssueCount: state.configValidation.issues.length,
+    healthyMcpServerCount,
+    totalMcpServerCount: state.mcpServers.length,
   };
 }

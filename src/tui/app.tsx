@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import { useSyncExternalStore } from "react";
+import { ShellFrame } from "./components/shell-frame.js";
 import { ChatScene } from "./scenes/chat.js";
 import { HomeScene } from "./scenes/home.js";
 import { PlaceholderScene } from "./scenes/placeholder.js";
@@ -52,7 +53,9 @@ export function TUIApp({ scene = "home", capabilities, shellState, shellStore }:
       </Text>
       <Text dimColor>Reason: {capabilities.reason}</Text>
       <Box marginTop={1} flexDirection="column">
-        {renderScene(state)}
+        <ShellFrame state={state} capabilities={capabilities}>
+          {renderScene(state)}
+        </ShellFrame>
       </Box>
     </Box>
   );

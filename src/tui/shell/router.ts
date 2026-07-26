@@ -11,6 +11,17 @@ export const SHELL_SCENES: readonly TUIScene[] = [
   "tasks",
 ];
 
+export const SCENE_LABELS: Record<TUIScene, string> = {
+  home: "Home",
+  chat: "Chat",
+  approvals: "Approvals",
+  resume: "Resume",
+  review: "Review",
+  settings: "Settings",
+  mcp: "MCP",
+  tasks: "Tasks",
+};
+
 const SHELL_SCENE_SET = new Set<string>(SHELL_SCENES);
 
 export function isTUIScene(value: string): value is TUIScene {
