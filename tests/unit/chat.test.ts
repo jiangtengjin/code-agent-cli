@@ -565,6 +565,46 @@ describe('startChat', () => {
     logSpy.mockRestore()
   })
 
+  it('shows a fallback hint and starts a fresh chat when --continue finds no resumable session', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({ content: 'Fresh reply', model: 'test' })
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-continue-empty-'))
+    tempDirs.push(tempDir)
+    const { startChat } = await import('../../src/cli/chat.js')
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat(
+      {
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        sessions: {
+          enabled: true,
+          storePath: tempDir,
+          defaultScope: 'workspace',
+          includePromptSessions: false,
+        },
+      } as any,
+      { continueLast: true } as any,
+    )
+
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining('当前工作区没有可恢复的会话，将开始新会话'),
+    )
+
+    await callbacks.line('new task after continue fallback')
+
+    expect(providerMocks.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [{ role: 'user', content: 'new task after continue fallback' }],
+      }),
+    )
+
+    logSpy.mockRestore()
+  })
+
   it('restores a matching session by resume query', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     providerMocks.chat.mockResolvedValueOnce({ content: 'Resumed reply', model: 'test' })
@@ -615,6 +655,77 @@ describe('startChat', () => {
         messages: [
           { role: 'user', content: 'previous context' },
           { role: 'user', content: 'next step' },
+        ],
+      }),
+    )
+
+    logSpy.mockRestore()
+  })
+
+  it('restores a matching session across workspaces when resumeAll is enabled', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({ content: 'Cross workspace reply', model: 'test' })
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-resume-all-'))
+    tempDirs.push(tempDir)
+    const { SessionStore } = await import('../../src/session/store.js')
+    const { createSessionState } = await import('../../src/session/runtime.js')
+    const { resolveWorkspace } = await import('../../src/session/workspace.js')
+    const { startChat } = await import('../../src/cli/chat.js')
+    const workspace = await resolveWorkspace(process.cwd())
+    const store = new SessionStore(tempDir)
+    const state = createSessionState({
+      sessionId: 'cross-workspace-session',
+      kind: 'interactive',
+      mode: 'normal',
+      workspaceKey: 'workspace-b-key',
+      workspacePath: path.join(os.tmpdir(), 'workspace-b'),
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    state.messages = [{ role: 'user', content: 'workspace b context' }]
+    state.title = 'workspace-b-task'
+    state.updatedAt = '2026-07-25T12:05:00.000Z'
+    state.lastActiveAt = '2026-07-25T12:05:00.000Z'
+    await store.saveSession(state)
+
+    const currentWorkspaceState = createSessionState({
+      sessionId: 'current-workspace-session',
+      kind: 'interactive',
+      mode: 'normal',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T11:00:00.000Z',
+    })
+    currentWorkspaceState.messages = [{ role: 'user', content: 'current workspace context' }]
+    currentWorkspaceState.title = 'current-workspace-task'
+    currentWorkspaceState.updatedAt = '2026-07-25T11:05:00.000Z'
+    currentWorkspaceState.lastActiveAt = '2026-07-25T11:05:00.000Z'
+    await store.saveSession(currentWorkspaceState)
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat(
+      {
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        sessions: {
+          enabled: true,
+          storePath: tempDir,
+          defaultScope: 'workspace',
+          includePromptSessions: false,
+        },
+      } as any,
+      { resumeQuery: 'workspace-b', resumeAll: true } as any,
+    )
+
+    await callbacks.line('continue cross workspace')
+
+    expect(providerMocks.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          { role: 'user', content: 'workspace b context' },
+          { role: 'user', content: 'continue cross workspace' },
         ],
       }),
     )
@@ -699,6 +810,172 @@ describe('startChat', () => {
         ],
       }),
     )
+
+    logSpy.mockRestore()
+  })
+
+  it('shows only current workspace interactive non-archived sessions in resume picker order', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-resume-filter-'))
+    tempDirs.push(tempDir)
+    const { SessionStore } = await import('../../src/session/store.js')
+    const { createSessionState } = await import('../../src/session/runtime.js')
+    const { resolveWorkspace } = await import('../../src/session/workspace.js')
+    const { startChat } = await import('../../src/cli/chat.js')
+    const workspace = await resolveWorkspace(process.cwd())
+    const store = new SessionStore(tempDir)
+
+    const visibleRecent = createSessionState({
+      sessionId: 'visible-recent',
+      kind: 'interactive',
+      mode: 'normal',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    visibleRecent.title = 'visible-recent'
+    visibleRecent.lastActiveAt = '2026-07-25T12:10:00.000Z'
+    visibleRecent.updatedAt = '2026-07-25T12:10:00.000Z'
+    await store.saveSession(visibleRecent)
+
+    const visibleOlder = createSessionState({
+      sessionId: 'visible-older',
+      kind: 'interactive',
+      mode: 'plan',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    visibleOlder.title = 'visible-older'
+    visibleOlder.status = 'awaiting_plan_approval'
+    visibleOlder.lastActiveAt = '2026-07-25T12:05:00.000Z'
+    visibleOlder.updatedAt = '2026-07-25T12:05:00.000Z'
+    await store.saveSession(visibleOlder)
+
+    const archived = createSessionState({
+      sessionId: 'archived-session',
+      kind: 'interactive',
+      mode: 'normal',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    archived.title = 'archived-session'
+    archived.status = 'archived'
+    archived.archivedAt = '2026-07-25T12:08:00.000Z'
+    archived.lastActiveAt = '2026-07-25T12:08:00.000Z'
+    archived.updatedAt = '2026-07-25T12:08:00.000Z'
+    await store.saveSession(archived)
+
+    const promptSession = createSessionState({
+      sessionId: 'prompt-session',
+      kind: 'prompt',
+      mode: 'normal',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    promptSession.title = 'prompt-session'
+    promptSession.lastActiveAt = '2026-07-25T12:09:00.000Z'
+    promptSession.updatedAt = '2026-07-25T12:09:00.000Z'
+    await store.saveSession(promptSession)
+
+    const otherWorkspace = createSessionState({
+      sessionId: 'other-workspace',
+      kind: 'interactive',
+      mode: 'normal',
+      workspaceKey: 'workspace-b-key',
+      workspacePath: path.join(os.tmpdir(), 'workspace-b'),
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    otherWorkspace.title = 'other-workspace'
+    otherWorkspace.lastActiveAt = '2026-07-25T12:11:00.000Z'
+    otherWorkspace.updatedAt = '2026-07-25T12:11:00.000Z'
+    await store.saveSession(otherWorkspace)
+
+    mockRl.question.mockImplementationOnce((_question: string, cb: (answer: string) => void) => {
+      cb('')
+    })
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat(
+      {
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        sessions: {
+          enabled: true,
+          storePath: tempDir,
+          defaultScope: 'workspace',
+          includePromptSessions: false,
+        },
+      } as any,
+      { resumePicker: true } as any,
+    )
+
+    const sessionRows = logSpy.mock.calls
+      .map(([message]) => String(message))
+      .filter((message) => message.includes('visible-'))
+
+    expect(sessionRows).toHaveLength(2)
+    expect(sessionRows[0]).toContain('visible-recent')
+    expect(sessionRows[1]).toContain('visible-older')
+    expect(logSpy.mock.calls.map(([message]) => String(message)).join('\n')).not.toContain('archived-session')
+    expect(logSpy.mock.calls.map(([message]) => String(message)).join('\n')).not.toContain('prompt-session')
+    expect(logSpy.mock.calls.map(([message]) => String(message)).join('\n')).not.toContain('other-workspace')
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('已取消恢复会话'))
+    expect(providerMocks.chat).not.toHaveBeenCalled()
+
+    logSpy.mockRestore()
+  })
+
+  it('rejects invalid resume picker selections without restoring a session', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-resume-invalid-'))
+    tempDirs.push(tempDir)
+    const { SessionStore } = await import('../../src/session/store.js')
+    const { createSessionState } = await import('../../src/session/runtime.js')
+    const { resolveWorkspace } = await import('../../src/session/workspace.js')
+    const { startChat } = await import('../../src/cli/chat.js')
+    const workspace = await resolveWorkspace(process.cwd())
+    const store = new SessionStore(tempDir)
+    const state = createSessionState({
+      sessionId: 'resume-invalid-1',
+      kind: 'interactive',
+      mode: 'normal',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    state.title = 'resume-invalid-1'
+    await store.saveSession(state)
+
+    mockRl.question.mockImplementationOnce((_question: string, cb: (answer: string) => void) => {
+      cb('99')
+    })
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat(
+      {
+        model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+        sessions: {
+          enabled: true,
+          storePath: tempDir,
+          defaultScope: 'workspace',
+          includePromptSessions: false,
+        },
+      } as any,
+      { resumePicker: true } as any,
+    )
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('无效的会话编号'))
+    expect(providerMocks.chat).not.toHaveBeenCalled()
 
     logSpy.mockRestore()
   })
@@ -906,6 +1183,83 @@ describe('startChat', () => {
         messages: [
           { role: 'user', content: 'previous context' },
           { role: 'user', content: 'next step' },
+        ],
+      }),
+    )
+
+    logSpy.mockRestore()
+  })
+
+  it('lists resumable sessions for /resume without restoring immediately', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMocks.chat.mockResolvedValueOnce({ content: 'Resumed after slash list', model: 'test' })
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'code-agent-session-slash-list-'))
+    tempDirs.push(tempDir)
+    const { SessionStore } = await import('../../src/session/store.js')
+    const { createSessionState } = await import('../../src/session/runtime.js')
+    const { resolveWorkspace } = await import('../../src/session/workspace.js')
+    const { startChat } = await import('../../src/cli/chat.js')
+    const workspace = await resolveWorkspace(process.cwd())
+    const store = new SessionStore(tempDir)
+
+    const visible = createSessionState({
+      sessionId: 'slash-visible',
+      kind: 'interactive',
+      mode: 'normal',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    visible.messages = [{ role: 'user', content: 'slash visible context' }]
+    visible.title = 'slash-visible'
+    visible.lastActiveAt = '2026-07-25T12:06:00.000Z'
+    visible.updatedAt = '2026-07-25T12:06:00.000Z'
+    await store.saveSession(visible)
+
+    const hiddenArchived = createSessionState({
+      sessionId: 'slash-archived',
+      kind: 'interactive',
+      mode: 'normal',
+      workspaceKey: workspace.key,
+      workspacePath: workspace.path,
+      now: '2026-07-25T12:00:00.000Z',
+    })
+    hiddenArchived.title = 'slash-archived'
+    hiddenArchived.status = 'archived'
+    hiddenArchived.archivedAt = '2026-07-25T12:07:00.000Z'
+    hiddenArchived.lastActiveAt = '2026-07-25T12:07:00.000Z'
+    hiddenArchived.updatedAt = '2026-07-25T12:07:00.000Z'
+    await store.saveSession(hiddenArchived)
+
+    const callbacks: Record<string, (input: string) => Promise<void> | void> = {}
+    mockRl.on.mockImplementation((event: string, cb: (input: string) => Promise<void> | void) => {
+      callbacks[event] = cb
+    })
+
+    await startChat({
+      model: { provider: 'deepseek', model: 'test', apiKey: 'sk-test' },
+      sessions: {
+        enabled: true,
+        storePath: tempDir,
+        defaultScope: 'workspace',
+        includePromptSessions: false,
+      },
+    } as any)
+
+    await callbacks.line('/resume')
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('slash-visible'))
+    expect(logSpy.mock.calls.map(([message]) => String(message)).join('\n')).not.toContain('slash-archived')
+    expect(providerMocks.chat).not.toHaveBeenCalled()
+
+    await callbacks.line('/resume slash-visible')
+    await callbacks.line('continue after slash list')
+
+    expect(providerMocks.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          { role: 'user', content: 'slash visible context' },
+          { role: 'user', content: 'continue after slash list' },
         ],
       }),
     )

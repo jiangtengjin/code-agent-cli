@@ -636,6 +636,13 @@ export type StartChatOptions = {
 };
 
 type InitialSessionLoadResult = {
+  resumedFromInterrupted: boolean;
+  session?: SessionState;
+  forkedFromTitle?: string;
+  notice?: string;
+};
+
+type ResolvedSessionLoadResult = {
   session: SessionState;
   resumedFromInterrupted: boolean;
   forkedFromTitle?: string;
@@ -649,7 +656,7 @@ function isAbortError(error: unknown): boolean {
   return false;
 }
 
-function normalizeInterruptedSession(state: SessionState): InitialSessionLoadResult {
+function normalizeInterruptedSession(state: SessionState): ResolvedSessionLoadResult {
   if (state.status !== "interrupted") {
     return {
       session: state,
@@ -721,7 +728,7 @@ async function resolveSessionSummaryState(
   store: SessionStore,
   summary: SessionSummary,
   options: Pick<StartChatOptions, "resumeFork">,
-): Promise<InitialSessionLoadResult | undefined> {
+): Promise<ResolvedSessionLoadResult | undefined> {
   const state = await store.loadSession(summary.id);
   if (!state) {
     return undefined;
@@ -769,6 +776,20 @@ async function loadInitialSession(
     : await store.findLatestSession(queryOptions);
 
   if (!summary) {
+    if (options.resumeQuery) {
+      return {
+        resumedFromInterrupted: false,
+        notice: `未找到会话：${options.resumeQuery}，将开始新会话。`,
+      };
+    }
+
+    if (options.continueLast || options.resumeLast) {
+      return {
+        resumedFromInterrupted: false,
+        notice: "当前工作区没有可恢复的会话，将开始新会话。",
+      };
+    }
+
     return undefined;
   }
 
@@ -1617,6 +1638,9 @@ export async function startChat(
   }
   if (initialSessionLoad?.resumedFromInterrupted) {
     logInterruptedSessionRestored();
+  }
+  if (initialSessionLoad?.notice) {
+    console.log(chalk.yellow(initialSessionLoad.notice));
   }
 
   await runSetup(() => {
