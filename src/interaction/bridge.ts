@@ -5,7 +5,9 @@ import type { InteractionEventEmitter } from "./emitter.js";
 import type {
   ApprovalRequest,
   ApprovalResolution,
+  ConfigSnapshot,
   ConfigValidationSnapshot,
+  ResumeCatalogSnapshot,
   InteractionTaskSnapshot,
   MCPHealthSnapshot,
   ReviewFinding,
@@ -127,12 +129,36 @@ export class InteractionEventBridge {
     );
   }
 
+  resumeCatalogUpdated(catalog: ResumeCatalogSnapshot) {
+    return this.sink.emit(
+      createInteractionEvent(
+        "resume.catalog.updated",
+        {
+          catalog,
+        },
+        this.now(),
+      ),
+    );
+  }
+
   reviewFindingsReady(findings: ReviewFinding[]) {
     return this.sink.emit(
       createInteractionEvent(
         "review.findings.ready",
         {
           findings,
+        },
+        this.now(),
+      ),
+    );
+  }
+
+  configSnapshotUpdated(snapshot: ConfigSnapshot) {
+    return this.sink.emit(
+      createInteractionEvent(
+        "config.snapshot.updated",
+        {
+          snapshot,
         },
         this.now(),
       ),

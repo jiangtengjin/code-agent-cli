@@ -47,9 +47,15 @@ describe("startInteractiveShell", () => {
     const renderApp = vi.fn();
     const startPlainChat = vi.fn();
     const submitTask = vi.fn(async () => undefined);
+    const executeCommand = vi.fn(async () => ({
+      handled: true,
+    }));
+    const initialize = vi.fn(async () => undefined);
     const createChatController = vi.fn(
       (): TUIChatController => ({
         submitTask,
+        executeCommand,
+        initialize,
       }),
     );
     const shellStore: ShellStore = {
@@ -107,6 +113,7 @@ describe("startInteractiveShell", () => {
       },
       shellStore,
       onSubmitTask: expect.any(Function),
+      onExecuteCommand: expect.any(Function),
     });
     expect(startPlainChat).not.toHaveBeenCalled();
     expect(createChatController).toHaveBeenCalledWith(config, {
@@ -115,6 +122,12 @@ describe("startInteractiveShell", () => {
     const [{ onSubmitTask }] = renderApp.mock.calls[0];
     await onSubmitTask("ship it");
     expect(submitTask).toHaveBeenCalledWith("ship it");
+    expect(initialize).toHaveBeenCalledWith({
+      initialScene: "home",
+      startOptions: {
+        initialScene: "home",
+      },
+    });
     expect(result.renderer).toBe("ink");
     expect(result.scene).toBe("home");
   });

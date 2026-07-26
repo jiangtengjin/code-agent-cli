@@ -176,6 +176,22 @@ function reduceInteractionEvent(state: ShellState, event: InteractionEvent): She
         lastEventAt: event.createdAt,
       };
     case "session.changed":
+      if (state.currentSession?.id !== undefined && state.currentSession.id !== event.summary.id) {
+        return {
+          ...state,
+          currentSession: event.summary,
+          chat: {
+            messages: [],
+            tools: [],
+          },
+          approvals: {
+            items: [],
+          },
+          tasks: [],
+          lastEventAt: event.createdAt,
+        };
+      }
+
       return {
         ...state,
         currentSession: event.summary,
@@ -192,10 +208,22 @@ function reduceInteractionEvent(state: ShellState, event: InteractionEvent): She
         },
         lastEventAt: event.createdAt,
       };
+    case "resume.catalog.updated":
+      return {
+        ...state,
+        resumeCatalog: event.catalog,
+        lastEventAt: event.createdAt,
+      };
     case "review.findings.ready":
       return {
         ...state,
         reviewFindings: event.findings,
+        lastEventAt: event.createdAt,
+      };
+    case "config.snapshot.updated":
+      return {
+        ...state,
+        configSnapshot: event.snapshot,
         lastEventAt: event.createdAt,
       };
     case "config.validation.updated":

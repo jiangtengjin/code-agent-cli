@@ -17,7 +17,9 @@ export function Inspector({ summary }: InspectorProps) {
       <Text dimColor>tool status: {summary.latestToolStatus ?? "n/a"}</Text>
       <Text>resume: {summary.lastResumeSessionId ?? "none"}</Text>
       <Text>review findings: {summary.reviewFindingCount}</Text>
-      <Text>config: {summary.configStatus} ({summary.configIssueCount})</Text>
+      <Text>
+        config: {summary.configStatus} ({summary.configIssueCount}){summary.configDirty ? " *" : ""}
+      </Text>
       <Text>
         mcp: {summary.healthyMcpServerCount}/{summary.totalMcpServerCount} healthy
       </Text>

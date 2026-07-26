@@ -21,6 +21,13 @@ export interface TUIAppProps {
   shellState?: ShellState;
   shellStore?: Pick<ShellStore, "getState" | "subscribe" | "navigate">;
   onSubmitTask?: (input: string) => Promise<unknown> | unknown;
+  onExecuteCommand?: (
+    input: string,
+  ) => Promise<{ handled: boolean; note?: string; navigateTo?: TUIScene }> | {
+    handled: boolean;
+    note?: string;
+    navigateTo?: TUIScene;
+  };
 }
 
 function renderScene(state: ShellState) {
@@ -49,6 +56,7 @@ export function TUIApp({
   shellState,
   shellStore,
   onSubmitTask,
+  onExecuteCommand,
 }: TUIAppProps) {
   const fallbackState = shellState ?? createInitialShellState({ activeScene: scene });
   const [composerDraft, setComposerDraft] = useState("");
@@ -123,6 +131,36 @@ export function TUIApp({
           return;
         }
 
+        if (draft.startsWith("/")) {
+          if (onExecuteCommand) {
+            setComposerDraft("");
+            setComposerNote("executing command...");
+            Promise.resolve(onExecuteCommand(draft))
+              .then((result) => {
+                if (!isMountedRef.current) {
+                  return;
+                }
+                if (result.navigateTo) {
+                  shellStore?.navigate(result.navigateTo);
+                }
+                setComposerNote(result.note);
+              })
+              .catch((error: unknown) => {
+                if (!isMountedRef.current) {
+                  return;
+                }
+                if (!composerDraftRef.current) {
+                  setComposerDraft(draft);
+                }
+                setComposerNote(error instanceof Error ? error.message : String(error));
+              });
+            return;
+          }
+
+          setComposerNote("command bridge pending");
+          return;
+        }
+
         if (onSubmitTask) {
           shellStore?.navigate("chat");
           setComposerDraft("");
@@ -176,7 +214,7 @@ export function TUIApp({
     return () => {
       stdin.removeListener("data", handleData);
     };
-  }, [onSubmitTask, shellStore, stdin]);
+  }, [onExecuteCommand, onSubmitTask, shellStore, stdin]);
 
   return (
     <Box flexDirection="column">

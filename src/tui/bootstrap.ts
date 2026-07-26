@@ -80,12 +80,17 @@ export async function startInteractiveShell(
   const chatController = createChatController(config, {
     eventEmitter: interactionEventSource,
   });
+  await chatController.initialize({
+    initialScene: scene,
+    startOptions: options,
+  });
   await Promise.resolve(
     renderApp({
       scene,
       capabilities,
       shellStore,
       onSubmitTask: (input) => chatController.submitTask(input),
+      onExecuteCommand: (input) => chatController.executeCommand(input),
     }),
   );
 

@@ -1,11 +1,13 @@
 import type {
   ApprovalRequest,
   ApprovalResolution,
+  ConfigSnapshot,
   ConfigValidationStatus,
   ConfigValidationSnapshot,
   InteractionTaskSnapshot,
   InteractionTaskStatus,
   MCPHealthSnapshot,
+  ResumeCatalogSnapshot,
   ReviewFinding,
 } from "../../interaction/events.js";
 import type { LLMMessage } from "../../types/provider.js";
@@ -60,6 +62,10 @@ export interface ShellResumeState {
   loadedAt: string;
 }
 
+export type ShellResumeCatalogState = ResumeCatalogSnapshot;
+
+export type ShellConfigSnapshotState = ConfigSnapshot;
+
 export interface ShellChatState {
   messages: ShellMessageEntry[];
   tools: ShellToolEntry[];
@@ -76,7 +82,9 @@ export interface ShellState {
   approvals: ShellApprovalState;
   tasks: ShellTaskEntry[];
   resume?: ShellResumeState;
+  resumeCatalog?: ShellResumeCatalogState;
   reviewFindings: ReviewFinding[];
+  configSnapshot?: ShellConfigSnapshotState;
   configValidation: ConfigValidationSnapshot;
   mcpServers: MCPHealthSnapshot[];
   lastEventAt?: string;
@@ -121,6 +129,7 @@ export interface InspectorSummary {
   latestToolStatus?: ShellToolStatus;
   lastResumeSessionId?: string;
   reviewFindingCount: number;
+  configDirty: boolean;
   configStatus: ConfigValidationStatus;
   configIssueCount: number;
   healthyMcpServerCount: number;
@@ -232,7 +241,12 @@ export function selectRailItems(state: ShellState): RailItemSummary[] {
   const configIssues = state.configValidation.issues.length;
   const taskCount = state.tasks.filter((task) => isActiveTask(task)).length;
   const mcpServerCount = state.mcpServers.length;
-  const hasResume = state.resume ? "1" : undefined;
+  const resumeBadge =
+    state.resumeCatalog && state.resumeCatalog.items.length > 0
+      ? String(state.resumeCatalog.items.length)
+      : state.resume
+        ? "1"
+        : undefined;
 
   return SHELL_SCENES.map((scene) => {
     let badge: string | undefined;
@@ -246,8 +260,8 @@ export function selectRailItems(state: ShellState): RailItemSummary[] {
       badge = String(taskCount);
     } else if (scene === "mcp" && mcpServerCount > 0) {
       badge = String(mcpServerCount);
-    } else if (scene === "resume" && hasResume) {
-      badge = hasResume;
+    } else if (scene === "resume" && resumeBadge) {
+      badge = resumeBadge;
     }
 
     return {
@@ -272,6 +286,7 @@ export function selectInspectorSummary(state: ShellState): InspectorSummary {
     latestToolStatus: latestTool?.status,
     lastResumeSessionId: state.resume?.sessionId,
     reviewFindingCount: state.reviewFindings.length,
+    configDirty: state.configSnapshot?.dirty ?? false,
     configStatus: state.configValidation.status,
     configIssueCount: state.configValidation.issues.length,
     healthyMcpServerCount,

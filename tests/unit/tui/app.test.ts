@@ -398,6 +398,71 @@ describe("TUIApp", () => {
     store.dispose();
   });
 
+  it("routes generic slash commands through the command bridge", async () => {
+    const store = createShellStore();
+    const onExecuteCommand = vi.fn(async () => ({
+      handled: true,
+      note: "mode: plan",
+      navigateTo: "chat" as const,
+    }));
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: {
+          level: "full",
+          isTTY: true,
+          supportsAltScreen: true,
+          supportsColor: true,
+          reason: "interactive-terminal",
+        },
+        shellStore: store,
+        onExecuteCommand,
+      }),
+    );
+
+    result.stdin.write("/mode plan");
+    result.stdin.write("\r");
+    await flushInput();
+    await flushInput();
+
+    expect(onExecuteCommand).toHaveBeenCalledWith("/mode plan");
+    expect(result.lastFrame()).toContain("Current scene: chat");
+    expect(result.lastFrame()).toContain("mode: plan");
+    expect(result.lastFrame()).not.toContain("draft: /mode plan");
+    result.unmount();
+    store.dispose();
+  });
+
+  it("restores the draft if a slash command fails", async () => {
+    const store = createShellStore();
+    const onExecuteCommand = vi.fn(async () => {
+      throw new Error("unknown command");
+    });
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: {
+          level: "full",
+          isTTY: true,
+          supportsAltScreen: true,
+          supportsColor: true,
+          reason: "interactive-terminal",
+        },
+        shellStore: store,
+        onExecuteCommand,
+      }),
+    );
+
+    result.stdin.write("/review");
+    result.stdin.write("\r");
+    await flushInput();
+    await flushInput();
+
+    expect(onExecuteCommand).toHaveBeenCalledWith("/review");
+    expect(result.lastFrame()).toContain("draft: /review");
+    expect(result.lastFrame()).toContain("unknown command");
+    result.unmount();
+    store.dispose();
+  });
+
   it("restores the submitted draft when task execution fails", async () => {
     const store = createShellStore();
     const onSubmitTask = vi.fn(async () => {

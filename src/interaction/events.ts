@@ -1,4 +1,5 @@
 import type { ChatMode } from "../types/mode.js";
+import type { Config } from "../types/config.js";
 import type { LLMMessage } from "../types/provider.js";
 import type { SessionSummary } from "../types/session.js";
 import type { ToolCall, ToolResult } from "../types/tool.js";
@@ -40,6 +41,19 @@ export interface ReviewFinding {
   line?: number;
 }
 
+export interface ResumeCatalogItem {
+  id: string;
+  title: string;
+  mode: ChatMode;
+  status: SessionSummary["status"];
+  updatedAt: string;
+  workspacePath: string;
+}
+
+export interface ResumeCatalogSnapshot {
+  items: ResumeCatalogItem[];
+}
+
 export type ConfigValidationStatus = "idle" | "validating" | "valid" | "invalid";
 
 export interface ConfigValidationIssue {
@@ -51,6 +65,14 @@ export interface ConfigValidationIssue {
 export interface ConfigValidationSnapshot {
   status: ConfigValidationStatus;
   issues: ConfigValidationIssue[];
+}
+
+export interface ConfigSnapshot {
+  filePath: string;
+  config: Config;
+  dirty: boolean;
+  diff?: string;
+  updatedAt: string;
 }
 
 export type MCPHealthStatus = "starting" | "healthy" | "degraded" | "stopped" | "failed";
@@ -110,9 +132,19 @@ export type InteractionEvent =
       forkedFromSessionId?: string;
     }
   | {
+      type: "resume.catalog.updated";
+      createdAt: string;
+      catalog: ResumeCatalogSnapshot;
+    }
+  | {
       type: "review.findings.ready";
       createdAt: string;
       findings: ReviewFinding[];
+    }
+  | {
+      type: "config.snapshot.updated";
+      createdAt: string;
+      snapshot: ConfigSnapshot;
     }
   | {
       type: "config.validation.updated";

@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
+import { getGlobalConfigPath, loadConfigFile, writeConfigFile } from "../../config/manager.js";
 import { InteractionEventBridge } from "../../interaction/bridge.js";
 import { InteractionEventEmitter } from "../../interaction/emitter.js";
-import {
-  createConfirmToolCallWithInteraction,
-  createTrackedMessagesHandler,
-  toToolCall,
-} from "../../interaction/runtime.js";
+import type {
+  ConfigValidationIssue,
+  ConfigValidationSnapshot,
+  ReviewFinding,
+} from "../../interaction/events.js";
+import { createTrackedMessagesHandler, toToolCall } from "../../interaction/runtime.js";
 import { CostTracker } from "../../llm/cost-tracker.js";
 import type { LLMProvider } from "../../llm/provider.js";
 import { createProviderFromConfig } from "../../llm/registry.js";
@@ -15,6 +17,7 @@ import { ModeRouter } from "../../modes/router.js";
 import { createTaskTiming } from "../../session/execution.js";
 import { SessionPersistence } from "../../session/persistence.js";
 import { createSessionState, createSessionSummary } from "../../session/runtime.js";
+import { SessionStore } from "../../session/store.js";
 import { UsageTracker } from "../../session/usage.js";
 import { resolveWorkspace, type WorkspaceInfo } from "../../session/workspace.js";
 import { createDefaultToolRegistry } from "../../tools/built-in/index.js";
@@ -24,11 +27,33 @@ import type { Config } from "../../types/config.js";
 import type { ChatMode } from "../../types/mode.js";
 import type { PlanState } from "../../types/plan.js";
 import type { LLMMessage, LLMToolCall } from "../../types/provider.js";
-import type { SessionState, SessionStatus } from "../../types/session.js";
+import type { SessionState, SessionStatus, SessionSummary } from "../../types/session.js";
 import type { ToolResult } from "../../types/tool.js";
+import type { TUIScene } from "../types.js";
+
+export interface TUIChatControllerInitializeOptions {
+  initialScene?: TUIScene;
+  startOptions?: {
+    continueLast?: boolean;
+    resumeLast?: boolean;
+    resumeQuery?: string;
+    plainUi?: boolean;
+    noAltScreen?: boolean;
+    initialScene?: TUIScene;
+  };
+}
+
+export interface TUICommandResult {
+  handled: boolean;
+  note?: string;
+  navigateTo?: TUIScene;
+}
 
 export interface TUIChatController {
+  initialize(options?: TUIChatControllerInitializeOptions): Promise<void>;
   submitTask(input: string): Promise<TUIChatSubmitResult>;
+  executeCommand(input: string): Promise<TUICommandResult>;
+  dispose(): void;
 }
 
 export interface TUIChatSubmitResult {
@@ -42,6 +67,14 @@ type ChatPersistence = Pick<
   "initialize" | "updateStatus" | "handleMessagesChanged" | "handlePlanStateChanged"
 > &
   Partial<Pick<SessionPersistence, "hydrate">>;
+
+type ReviewScanner = () => Promise<ReviewFinding[]>;
+
+type PendingApproval = {
+  taskId?: string;
+  taskTitle?: string;
+  resolve: (approved: boolean) => void;
+};
 
 export interface TUIChatControllerDependencies {
   eventEmitter?: InteractionEventEmitter;
@@ -57,10 +90,14 @@ export interface TUIChatControllerDependencies {
   createTaskId?: () => string;
   createSessionId?: () => string;
   mcpManager?: Pick<MCPServerManager, "startAll">;
+  sessionsStorePath?: string;
+  configPath?: string;
+  reviewScanner?: ReviewScanner;
 }
 
-const PLAN_APPROVAL_INPUTS = new Set(["y", "yes", "确认", "执行", "继续"]);
-const PLAN_REJECT_INPUTS = new Set(["n", "no", "取消", "停止"]);
+const PLAN_APPROVAL_INPUTS = new Set(["y", "yes", "纭", "鎵ц", "缁х画"]);
+const PLAN_REJECT_INPUTS = new Set(["n", "no", "鍙栨秷", "鍋滄"]);
+const MODE_NAMES: ChatMode[] = ["normal", "auto", "plan", "edit"];
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -72,6 +109,136 @@ function isPlanApprovalInput(input: string): boolean {
 
 function isPlanRejectInput(input: string): boolean {
   return PLAN_REJECT_INPUTS.has(input.trim().toLowerCase());
+}
+
+function tokenizeCommand(input: string): string[] {
+  const tokens: string[] = [];
+  const matcher = /"([^"]*)"|'([^']*)'|(\S+)/gu;
+
+  for (const match of input.matchAll(matcher)) {
+    tokens.push(match[1] ?? match[2] ?? match[3] ?? "");
+  }
+
+  return tokens;
+}
+
+function cloneConfig(config: Config): Config {
+  return structuredClone(config);
+}
+
+function parseCommandValue(rawValue: string): unknown {
+  if (rawValue === "true") {
+    return true;
+  }
+  if (rawValue === "false") {
+    return false;
+  }
+  if (rawValue === "null") {
+    return null;
+  }
+  if (/^-?\d+(?:\.\d+)?$/u.test(rawValue)) {
+    return Number(rawValue);
+  }
+  if (
+    (rawValue.startsWith("{") && rawValue.endsWith("}")) ||
+    (rawValue.startsWith("[") && rawValue.endsWith("]"))
+  ) {
+    try {
+      return JSON.parse(rawValue);
+    } catch {
+      return rawValue;
+    }
+  }
+
+  return rawValue;
+}
+
+function setConfigValue(config: Config, path: string, value: unknown): void {
+  const segments = path
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  if (segments.length === 0) {
+    throw new Error("Config path cannot be empty.");
+  }
+
+  let cursor = config as Record<string, unknown>;
+  for (const segment of segments.slice(0, -1)) {
+    const nextValue = cursor[segment];
+    if (typeof nextValue !== "object" || nextValue === null || Array.isArray(nextValue)) {
+      cursor[segment] = {};
+    }
+    cursor = cursor[segment] as Record<string, unknown>;
+  }
+
+  cursor[segments[segments.length - 1]] = value;
+}
+
+function createConfigDiff(previousConfig: Config, nextConfig: Config): string | undefined {
+  const previousText = JSON.stringify(previousConfig, null, 2);
+  const nextText = JSON.stringify(nextConfig, null, 2);
+  if (previousText === nextText) {
+    return undefined;
+  }
+
+  const previousLines = previousText.split("\n");
+  const nextLines = nextText.split("\n");
+  const maxLineCount = Math.max(previousLines.length, nextLines.length);
+  const diffLines: string[] = [];
+
+  for (let index = 0; index < maxLineCount; index += 1) {
+    const previousLine = previousLines[index];
+    const nextLine = nextLines[index];
+    if (previousLine === nextLine) {
+      continue;
+    }
+
+    if (previousLine !== undefined) {
+      diffLines.push(`-${previousLine}`);
+    }
+    if (nextLine !== undefined) {
+      diffLines.push(`+${nextLine}`);
+    }
+  }
+
+  return diffLines.join("\n");
+}
+
+function validateConfigSnapshot(config: Config): ConfigValidationSnapshot {
+  const issues: ConfigValidationIssue[] = [];
+
+  if (!config.model?.provider) {
+    issues.push({
+      path: "model.provider",
+      message: "Provider is required.",
+      severity: "error",
+    });
+  }
+
+  if (!config.model?.model) {
+    issues.push({
+      path: "model.model",
+      message: "Model is required.",
+      severity: "error",
+    });
+  }
+
+  return {
+    status: issues.length > 0 ? "invalid" : "valid",
+    issues,
+  };
+}
+
+function mapSessionToResumeItem(session: SessionSummary) {
+  return {
+    id: session.id,
+    title: session.title,
+    mode: session.mode,
+    status: session.status,
+    updatedAt: session.updatedAt,
+    workspacePath: session.workspacePath,
+  };
 }
 
 class DefaultTUIChatController implements TUIChatController {
@@ -87,10 +254,14 @@ class DefaultTUIChatController implements TUIChatController {
   private readonly cwd: string;
   private readonly persistence: ChatPersistence;
   private readonly trackedMessages;
+  private readonly sessionsStorePath?: string;
+  private readonly configPath: string;
+  private readonly reviewScanner: ReviewScanner;
 
   private provider?: LLMProvider;
   private toolRegistry?: ToolRegistry;
   private mcpManager?: Pick<MCPServerManager, "startAll">;
+  private sessionStore?: SessionStore;
   private initialized?: Promise<void>;
   private runtimeSession?: SessionState;
   private lastSessionDigest?: string;
@@ -98,28 +269,38 @@ class DefaultTUIChatController implements TUIChatController {
   private messages: LLMMessage[] = [];
   private pendingPlan?: PlanState;
   private status: SessionStatus = "idle";
-  private readonly mode: ChatMode;
+  private mode: ChatMode;
+  private readonly pendingApprovals = new Map<string, PendingApproval>();
+  private activeTask?: {
+    id: string;
+    title: string;
+  };
+  private savedConfig?: Config;
+  private draftConfig?: Config;
 
   constructor(
     private readonly config: Config,
     private readonly dependencies: TUIChatControllerDependencies = {},
   ) {
     this.emitter = dependencies.eventEmitter ?? new InteractionEventEmitter();
+    this.now = dependencies.now ?? (() => new Date().toISOString());
     this.interaction = new InteractionEventBridge(this.emitter, () => this.now());
     this.usageTracker = dependencies.usageTracker ?? new UsageTracker();
     this.costTracker = dependencies.costTracker ?? new CostTracker(config.costGuard);
     this.modeRouter = dependencies.modeRouter ?? new ModeRouter();
     this.resolveWorkspaceForCwd = dependencies.resolveWorkspace ?? resolveWorkspace;
-    this.now = dependencies.now ?? (() => new Date().toISOString());
     this.createTaskId = dependencies.createTaskId ?? randomUUID;
     this.createSessionId = dependencies.createSessionId ?? randomUUID;
     this.cwd = dependencies.cwd ?? process.cwd();
     this.mode = (config.mode as ChatMode) ?? "normal";
+    this.sessionsStorePath = dependencies.sessionsStorePath ?? config.sessions?.storePath;
+    this.configPath = dependencies.configPath ?? getGlobalConfigPath();
+    this.reviewScanner = dependencies.reviewScanner ?? (async () => []);
     this.persistence =
       dependencies.persistence ??
       new SessionPersistence({
         enabled: config.sessions?.enabled !== false,
-        storePath: config.sessions?.storePath,
+        storePath: this.sessionsStorePath,
         kind: "interactive",
         cwd: this.cwd,
         usageTracker: this.usageTracker,
@@ -135,6 +316,24 @@ class DefaultTUIChatController implements TUIChatController {
     );
   }
 
+  async initialize(options: TUIChatControllerInitializeOptions = {}): Promise<void> {
+    await this.ensureInitialized();
+
+    if (options.startOptions?.continueLast || options.startOptions?.resumeLast) {
+      await this.restoreLatestSession();
+    } else if (typeof options.startOptions?.resumeQuery === "string") {
+      await this.restoreSessionByQuery(options.startOptions.resumeQuery);
+    }
+
+    if (options.initialScene === "resume") {
+      await this.refreshResumeCatalog();
+    }
+
+    if (options.initialScene === "settings" || options.initialScene === "mcp") {
+      await this.loadConfigSnapshot();
+    }
+  }
+
   async submitTask(input: string): Promise<TUIChatSubmitResult> {
     const trimmed = input.trim();
     if (!trimmed) {
@@ -148,14 +347,72 @@ class DefaultTUIChatController implements TUIChatController {
     const taskId = this.createTaskId();
     const submission = this.runTask(taskId, trimmed).finally(() => {
       this.activeSubmission = undefined;
+      this.activeTask = undefined;
     });
     this.activeSubmission = submission;
     return submission;
   }
 
+  async executeCommand(input: string): Promise<TUICommandResult> {
+    const trimmed = input.trim();
+    if (!trimmed.startsWith("/")) {
+      return { handled: false };
+    }
+
+    await this.ensureInitialized();
+
+    const tokens = tokenizeCommand(trimmed.slice(1));
+    const command = tokens[0]?.toLowerCase();
+    const args = tokens.slice(1);
+
+    switch (command) {
+      case "approve":
+        return this.resolvePendingApproval(args[0], true);
+      case "reject":
+        return this.resolvePendingApproval(args[0], false);
+      case "resume":
+        if (args.length === 0) {
+          await this.refreshResumeCatalog();
+          return {
+            handled: true,
+            navigateTo: "resume",
+            note: "resume catalog refreshed",
+          };
+        }
+        await this.restoreSessionByQuery(args.join(" "));
+        return {
+          handled: true,
+          navigateTo: "chat",
+        };
+      case "review":
+        return this.runReviewCommand();
+      case "config":
+        return this.runConfigCommand(args);
+      case "mode":
+        return this.runModeCommand(args);
+      default:
+        return {
+          handled: false,
+          note: `unknown command: /${command ?? ""}`,
+        };
+    }
+  }
+
+  dispose(): void {
+    for (const [requestId, approval] of this.pendingApprovals) {
+      approval.resolve(false);
+      this.pendingApprovals.delete(requestId);
+    }
+  }
+
   private async runTask(taskId: string, input: string): Promise<TUIChatSubmitResult> {
     await this.ensureInitialized();
     await this.ensureRuntimeSession();
+
+    this.activeTask = {
+      id: taskId,
+      title: input,
+    };
 
     this.interaction.taskUpdated({
       id: taskId,
@@ -177,7 +434,7 @@ class DefaultTUIChatController implements TUIChatController {
       costTracker: this.costTracker,
       timing: createTaskTiming(),
       skipConfirm: Boolean(this.config.yolo),
-      confirmToolCall: createConfirmToolCallWithInteraction(this.interaction, async () => false),
+      confirmToolCall: (toolCall: LLMToolCall) => this.confirmToolCall(toolCall),
       onMessagesChanged: async (nextMessages: LLMMessage[]) => {
         this.messages = [...nextMessages];
         await this.trackedMessages.handleMessagesChanged(this.messages);
@@ -243,6 +500,46 @@ class DefaultTUIChatController implements TUIChatController {
     }
   }
 
+  private async confirmToolCall(toolCall: LLMToolCall): Promise<boolean> {
+    this.interaction.approvalRequested({
+      id: toolCall.id,
+      toolCall: toToolCall(toolCall),
+      title: `Confirm ${toolCall.name}`,
+      summary: JSON.stringify(toolCall.args),
+      risk: "high",
+      workingDirectory: this.cwd,
+    });
+
+    if (this.activeTask) {
+      this.interaction.taskUpdated({
+        id: this.activeTask.id,
+        title: this.activeTask.title,
+        status: "awaiting_approval",
+        mode: this.mode,
+        detail: `Awaiting approval for ${toolCall.name}`,
+      });
+    }
+
+    const approved = await new Promise<boolean>((resolve) => {
+      this.pendingApprovals.set(toolCall.id, {
+        taskId: this.activeTask?.id,
+        taskTitle: this.activeTask?.title,
+        resolve,
+      });
+    });
+
+    if (approved && this.activeTask) {
+      this.interaction.taskUpdated({
+        id: this.activeTask.id,
+        title: this.activeTask.title,
+        status: "running",
+        mode: this.mode,
+      });
+    }
+
+    return approved;
+  }
+
   private async executeTaskInput(
     input: string,
     handler: ModeHandler,
@@ -296,6 +593,254 @@ class DefaultTUIChatController implements TUIChatController {
     };
   }
 
+  private async runReviewCommand(): Promise<TUICommandResult> {
+    const findings = await this.reviewScanner();
+    this.interaction.reviewFindingsReady(findings);
+    return {
+      handled: true,
+      navigateTo: "review",
+      note: `review findings: ${findings.length}`,
+    };
+  }
+
+  private async runConfigCommand(args: string[]): Promise<TUICommandResult> {
+    if (this.draftConfig === undefined || this.savedConfig === undefined) {
+      await this.loadConfigSnapshot();
+    }
+
+    const action = args[0]?.toLowerCase();
+    if (!action) {
+      return {
+        handled: true,
+        navigateTo: "settings",
+      };
+    }
+
+    if (action === "save") {
+      if (!this.draftConfig) {
+        throw new Error("Config snapshot is not loaded.");
+      }
+
+      writeConfigFile(this.configPath, this.draftConfig);
+      this.savedConfig = cloneConfig(this.draftConfig);
+      this.publishConfigState();
+      return {
+        handled: true,
+        note: "config saved",
+        navigateTo: "settings",
+      };
+    }
+
+    if (action === "set") {
+      const path = args[1];
+      if (!path) {
+        throw new Error("Config path is required.");
+      }
+      if (args.length < 3) {
+        throw new Error("Config value is required.");
+      }
+
+      const rawValue = args.slice(2).join(" ");
+      if (!this.draftConfig) {
+        throw new Error("Config snapshot is not loaded.");
+      }
+
+      const nextConfig = cloneConfig(this.draftConfig);
+      setConfigValue(nextConfig, path, parseCommandValue(rawValue));
+      this.draftConfig = nextConfig;
+      this.publishConfigState();
+      return {
+        handled: true,
+        note: `config updated: ${path}`,
+        navigateTo: "settings",
+      };
+    }
+
+    if (action === "reload") {
+      await this.loadConfigSnapshot();
+      return {
+        handled: true,
+        note: "config reloaded",
+        navigateTo: "settings",
+      };
+    }
+
+    return {
+      handled: false,
+      note: `unknown config command: ${action}`,
+    };
+  }
+
+  private async runModeCommand(args: string[]): Promise<TUICommandResult> {
+    const nextMode = args[0] as ChatMode | undefined;
+    if (!nextMode) {
+      return {
+        handled: true,
+        note: `mode: ${this.mode}`,
+      };
+    }
+
+    if (!MODE_NAMES.includes(nextMode)) {
+      throw new Error(`Unknown mode: ${nextMode}`);
+    }
+
+    this.mode = nextMode;
+    this.emitSessionSummary();
+    return {
+      handled: true,
+      navigateTo: "chat",
+      note: `mode: ${this.mode}`,
+    };
+  }
+
+  private async resolvePendingApproval(
+    requestId: string | undefined,
+    approved: boolean,
+  ): Promise<TUICommandResult> {
+    if (!requestId) {
+      throw new Error("Approval id is required.");
+    }
+
+    const pendingApproval = this.pendingApprovals.get(requestId);
+    if (!pendingApproval) {
+      throw new Error(`Approval not found: ${requestId}`);
+    }
+
+    this.pendingApprovals.delete(requestId);
+    this.interaction.approvalResolved(requestId, approved ? "approved_once" : "rejected");
+    if (!approved && pendingApproval.taskId && pendingApproval.taskTitle) {
+      this.interaction.taskUpdated({
+        id: pendingApproval.taskId,
+        title: pendingApproval.taskTitle,
+        status: "failed",
+        mode: this.mode,
+        detail: `Approval rejected: ${requestId}`,
+      });
+    }
+    pendingApproval.resolve(approved);
+
+    return {
+      handled: true,
+      note: `${approved ? "approved" : "rejected"}: ${requestId}`,
+    };
+  }
+
+  private async refreshResumeCatalog(): Promise<void> {
+    const sessionStore = this.getSessionStore();
+    if (!sessionStore) {
+      this.interaction.resumeCatalogUpdated({
+        items: [],
+      });
+      return;
+    }
+
+    const workspace = await this.getWorkspaceInfo();
+    const sessions = await sessionStore.listSessions({
+      workspaceKey: workspace.key,
+      kind: "interactive",
+    });
+    this.interaction.resumeCatalogUpdated({
+      items: sessions.map((session) => mapSessionToResumeItem(session)),
+    });
+  }
+
+  private async restoreLatestSession(): Promise<void> {
+    const sessionStore = this.getSessionStore();
+    if (!sessionStore) {
+      return;
+    }
+
+    const workspace = await this.getWorkspaceInfo();
+    const summary = await sessionStore.findLatestSession({
+      workspaceKey: workspace.key,
+      kind: "interactive",
+    });
+    if (!summary) {
+      return;
+    }
+
+    await this.restoreSessionSummary(summary);
+  }
+
+  private async restoreSessionByQuery(query: string): Promise<void> {
+    const normalizedQuery = query.trim();
+    if (!normalizedQuery) {
+      throw new Error("Resume query cannot be empty.");
+    }
+
+    const sessionStore = this.getSessionStore();
+    if (!sessionStore) {
+      throw new Error("Session persistence is not configured.");
+    }
+
+    const workspace = await this.getWorkspaceInfo();
+    const summary = await sessionStore.findSessionByQuery(normalizedQuery, {
+      workspaceKey: workspace.key,
+      kind: "interactive",
+    });
+    if (!summary) {
+      throw new Error(`Session not found: ${normalizedQuery}`);
+    }
+
+    await this.restoreSessionSummary(summary);
+  }
+
+  private async restoreSessionSummary(summary: SessionSummary): Promise<void> {
+    const sessionStore = this.getSessionStore();
+    const session = await sessionStore?.loadSession(summary.id);
+    if (!session) {
+      throw new Error(`Session not found: ${summary.id}`);
+    }
+
+    this.runtimeSession = structuredClone(session);
+    this.messages = [...session.messages];
+    this.pendingPlan = session.pendingPlan;
+    this.status = session.status;
+    this.mode = session.mode;
+    this.usageTracker.restore(session.usage);
+    this.costTracker.restore(session.cost);
+    this.persistence.hydrate?.(this.runtimeSession);
+    this.lastSessionDigest = undefined;
+    this.emitSessionSummary();
+    for (const message of this.messages) {
+      this.interaction.messageAdded(message);
+    }
+    this.trackedMessages.setTrackedCount(this.messages.length);
+    this.interaction.resumeLoaded(session.sessionId, {
+      resumedFromInterrupted: session.status === "interrupted",
+      forkedFromSessionId: session.parentSessionId,
+    });
+  }
+
+  private async loadConfigSnapshot(): Promise<void> {
+    let loadedConfig: Config;
+    try {
+      loadedConfig = loadConfigFile(this.configPath);
+    } catch {
+      loadedConfig = cloneConfig(this.config);
+    }
+
+    this.savedConfig = cloneConfig(loadedConfig);
+    this.draftConfig = cloneConfig(loadedConfig);
+    this.publishConfigState();
+  }
+
+  private publishConfigState(): void {
+    if (!this.savedConfig || !this.draftConfig) {
+      return;
+    }
+
+    const diff = createConfigDiff(this.savedConfig, this.draftConfig);
+    this.interaction.configSnapshotUpdated({
+      filePath: this.configPath,
+      config: cloneConfig(this.draftConfig),
+      dirty: diff !== undefined,
+      diff,
+      updatedAt: this.now(),
+    });
+    this.interaction.configValidationUpdated(validateConfigSnapshot(this.draftConfig));
+  }
+
   private async ensureInitialized(): Promise<void> {
     if (!this.initialized) {
       this.initialized = (async () => {
@@ -333,6 +878,29 @@ class DefaultTUIChatController implements TUIChatController {
     this.persistence.hydrate?.(this.runtimeSession);
     this.emitSessionSummary();
     return this.runtimeSession;
+  }
+
+  private async getWorkspaceInfo(): Promise<WorkspaceInfo> {
+    if (this.runtimeSession) {
+      return {
+        key: this.runtimeSession.workspaceKey,
+        path: this.runtimeSession.workspacePath,
+      };
+    }
+
+    return this.resolveWorkspaceForCwd(this.cwd);
+  }
+
+  private getSessionStore(): SessionStore | undefined {
+    if (!this.sessionsStorePath) {
+      return undefined;
+    }
+
+    if (!this.sessionStore) {
+      this.sessionStore = new SessionStore(this.sessionsStorePath);
+    }
+
+    return this.sessionStore;
   }
 
   private emitSessionSummary(): void {

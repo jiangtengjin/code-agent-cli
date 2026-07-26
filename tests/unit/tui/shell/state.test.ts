@@ -148,6 +148,24 @@ describe("shell state selectors", () => {
         "2026-07-26T14:13:00.000Z",
       ),
       createInteractionEvent(
+        "config.snapshot.updated",
+        {
+          snapshot: {
+            filePath: "D:/tmp/config.jsonc",
+            config: {
+              model: {
+                provider: "deepseek",
+                model: "deepseek-chat",
+              },
+            },
+            dirty: true,
+            diff: "+    \"model\": \"deepseek-chat\"",
+            updatedAt: "2026-07-26T14:13:30.000Z",
+          },
+        },
+        "2026-07-26T14:13:30.000Z",
+      ),
+      createInteractionEvent(
         "config.validation.updated",
         {
           validation: {
@@ -182,6 +200,24 @@ describe("shell state selectors", () => {
         "2026-07-26T14:15:00.000Z",
       ),
       createInteractionEvent(
+        "resume.catalog.updated",
+        {
+          catalog: {
+            items: [
+              {
+                id: "session-4",
+                title: "Shell inspector context",
+                mode: "normal",
+                status: "running",
+                updatedAt: "2026-07-26T14:15:20.000Z",
+                workspacePath: "D:/JAVA/code-agent-cli",
+              },
+            ],
+          },
+        },
+        "2026-07-26T14:15:20.000Z",
+      ),
+      createInteractionEvent(
         "resume.loaded",
         {
           sessionId: "session-4",
@@ -207,6 +243,9 @@ describe("shell state selectors", () => {
     expect(railItems.find((item) => item.scene === "review")).toMatchObject({
       badge: "1",
     });
+    expect(railItems.find((item) => item.scene === "resume")).toMatchObject({
+      badge: "1",
+    });
     expect(railItems.find((item) => item.scene === "tasks")).toMatchObject({
       badge: undefined,
     });
@@ -221,6 +260,7 @@ describe("shell state selectors", () => {
       reviewFindingCount: 1,
       configStatus: "invalid",
       configIssueCount: 1,
+      configDirty: true,
       healthyMcpServerCount: 1,
       totalMcpServerCount: 2,
     });

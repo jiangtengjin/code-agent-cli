@@ -127,6 +127,24 @@ describe("reduceShellState", () => {
         ),
         toolFinishedEvent,
         createInteractionEvent(
+          "resume.catalog.updated",
+          {
+            catalog: {
+              items: [
+                {
+                  id: "session-1",
+                  title: "Fix shell state",
+                  mode: "normal",
+                  status: "running",
+                  updatedAt: "2026-07-26T09:02:05.000Z",
+                  workspacePath: "D:/JAVA/code-agent-cli",
+                },
+              ],
+            },
+          },
+          "2026-07-26T09:02:05.000Z",
+        ),
+        createInteractionEvent(
           "resume.loaded",
           {
             sessionId: "session-1",
@@ -149,6 +167,24 @@ describe("reduceShellState", () => {
             ],
           },
           "2026-07-26T09:02:20.000Z",
+        ),
+        createInteractionEvent(
+          "config.snapshot.updated",
+          {
+            snapshot: {
+              filePath: "D:/tmp/config.jsonc",
+              config: {
+                model: {
+                  provider: "deepseek",
+                  model: "deepseek-chat",
+                },
+              },
+              dirty: true,
+              diff: "+    \"model\": \"deepseek-chat\"",
+              updatedAt: "2026-07-26T09:02:25.000Z",
+            },
+          },
+          "2026-07-26T09:02:25.000Z",
         ),
         createInteractionEvent(
           "config.validation.updated",
@@ -218,7 +254,19 @@ describe("reduceShellState", () => {
       sessionId: "session-1",
       resumedFromInterrupted: true,
     });
+    expect(nextState.resumeCatalog).toEqual({
+      items: [
+        expect.objectContaining({
+          id: "session-1",
+          title: "Fix shell state",
+        }),
+      ],
+    });
     expect(nextState.reviewFindings).toHaveLength(1);
+    expect(nextState.configSnapshot).toMatchObject({
+      filePath: "D:/tmp/config.jsonc",
+      dirty: true,
+    });
     expect(nextState.configValidation).toMatchObject({
       status: "invalid",
     });
@@ -258,6 +306,117 @@ describe("reduceShellState", () => {
         finishedAt: "2026-07-26T09:04:00.000Z",
       }),
     ]);
+  });
+
+  it("clears session-scoped shell data when switching to a different session id", () => {
+    const initialState = reduceEvents([
+      createInteractionEvent(
+        "session.changed",
+        {
+          summary: {
+            id: "session-1",
+            kind: "interactive",
+            title: "Old session",
+            workspaceKey: "workspace-a",
+            workspacePath: "D:/JAVA/code-agent-cli",
+            status: "running",
+            mode: "normal",
+            createdAt: "2026-07-26T11:00:00.000Z",
+            updatedAt: "2026-07-26T11:01:00.000Z",
+            lastActiveAt: "2026-07-26T11:01:00.000Z",
+            turnCount: 1,
+          },
+        },
+        "2026-07-26T11:00:00.000Z",
+      ),
+      createInteractionEvent(
+        "message.added",
+        {
+          message: {
+            role: "user",
+            content: "Old transcript",
+          },
+        },
+        "2026-07-26T11:00:10.000Z",
+      ),
+      createInteractionEvent(
+        "tool.started",
+        {
+          toolCall: {
+            id: "tool-1",
+            name: "shell_command",
+            args: {
+              command: "pnpm test",
+            },
+          },
+          requiresApproval: false,
+        },
+        "2026-07-26T11:00:20.000Z",
+      ),
+      createInteractionEvent(
+        "approval.requested",
+        {
+          request: {
+            id: "approval-1",
+            toolCall: {
+              id: "tool-2",
+              name: "write_file",
+              args: {},
+            },
+            title: "Approve write",
+            summary: "Update the transcript",
+            risk: "medium",
+          },
+        },
+        "2026-07-26T11:00:30.000Z",
+      ),
+      createInteractionEvent(
+        "task.updated",
+        {
+          task: {
+            id: "task-1",
+            title: "Old task",
+            status: "running",
+            mode: "normal",
+          },
+        },
+        "2026-07-26T11:00:40.000Z",
+      ),
+    ]);
+
+    const nextState = reduceShellState(
+      initialState,
+      createInteractionEventAction(
+        createInteractionEvent(
+          "session.changed",
+          {
+            summary: {
+              id: "session-2",
+              kind: "interactive",
+              title: "New session",
+              workspaceKey: "workspace-a",
+              workspacePath: "D:/JAVA/code-agent-cli",
+              status: "idle",
+              mode: "plan",
+              createdAt: "2026-07-26T11:02:00.000Z",
+              updatedAt: "2026-07-26T11:02:00.000Z",
+              lastActiveAt: "2026-07-26T11:02:00.000Z",
+              turnCount: 0,
+            },
+          },
+          "2026-07-26T11:02:00.000Z",
+        ),
+      ),
+    );
+
+    expect(nextState.currentSession).toMatchObject({
+      id: "session-2",
+      title: "New session",
+    });
+    expect(nextState.chat.messages).toEqual([]);
+    expect(nextState.chat.tools).toEqual([]);
+    expect(nextState.approvals.items).toEqual([]);
+    expect(nextState.tasks).toEqual([]);
   });
 });
 
