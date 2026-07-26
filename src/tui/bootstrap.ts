@@ -1,9 +1,11 @@
 import { render } from "ink";
 import React from "react";
+import type { InteractionEventEmitter } from "../interaction/emitter.js";
 import { type StartChatOptions, startChat } from "../cli/chat.js";
 import type { Config } from "../types/config.js";
 import { TUIApp, type TUIAppProps } from "./app.js";
 import { detectTerminalCapabilities } from "./capabilities.js";
+import { createShellStore, type CreateShellStoreOptions, type ShellStore } from "./shell/store.js";
 import type { TUIScene, TerminalCapabilities } from "./types.js";
 
 export interface StartInteractiveShellOptions extends StartChatOptions {
@@ -19,6 +21,8 @@ export interface InteractiveShellDependencies {
   }) => TerminalCapabilities;
   startPlainChat?: typeof startChat;
   renderApp?: (props: TUIAppProps) => unknown | Promise<unknown>;
+  createShellStore?: (options: CreateShellStoreOptions) => ShellStore;
+  interactionEventSource?: Pick<InteractionEventEmitter, "on">;
 }
 
 export interface InteractiveShellResult {
@@ -57,7 +61,14 @@ export async function startInteractiveShell(
   }
 
   const renderApp = dependencies.renderApp ?? renderTUIApp;
-  await Promise.resolve(renderApp({ scene, capabilities }));
+  const createStore = dependencies.createShellStore ?? createShellStore;
+  const shellStore = createStore({
+    initialState: {
+      activeScene: scene,
+    },
+    emitter: dependencies.interactionEventSource,
+  });
+  await Promise.resolve(renderApp({ scene, capabilities, shellStore }));
 
   return {
     renderer: "ink",

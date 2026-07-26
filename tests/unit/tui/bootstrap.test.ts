@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { startInteractiveShell } from "../../../src/tui/bootstrap.js";
+import type { ShellStore } from "../../../src/tui/shell/store.js";
 import type { Config } from "../../../src/types/config.js";
 
 const config: Config = {
@@ -44,6 +45,23 @@ describe("startInteractiveShell", () => {
   it("renders the ink app when the terminal supports tui mode", async () => {
     const renderApp = vi.fn();
     const startPlainChat = vi.fn();
+    const shellStore: ShellStore = {
+      getState: vi.fn(() => ({
+        activeScene: "home",
+        chat: { messages: [], tools: [] },
+        approvals: { items: [] },
+        tasks: [],
+        reviewFindings: [],
+        configValidation: { status: "idle", issues: [] },
+        mcpServers: [],
+      })),
+      dispatch: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+      navigate: vi.fn(),
+      render: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const createShellStore = vi.fn(() => shellStore);
 
     const result = await startInteractiveShell(
       config,
@@ -60,9 +78,16 @@ describe("startInteractiveShell", () => {
         }),
         startPlainChat,
         renderApp,
+        createShellStore,
       },
     );
 
+    expect(createShellStore).toHaveBeenCalledWith({
+      initialState: {
+        activeScene: "home",
+      },
+      emitter: undefined,
+    });
     expect(renderApp).toHaveBeenCalledWith({
       scene: "home",
       capabilities: {
@@ -72,6 +97,7 @@ describe("startInteractiveShell", () => {
         supportsColor: true,
         reason: "interactive-terminal",
       },
+      shellStore,
     });
     expect(startPlainChat).not.toHaveBeenCalled();
     expect(result.renderer).toBe("ink");

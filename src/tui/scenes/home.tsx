@@ -1,22 +1,32 @@
 import { Box, Text } from "ink";
+import { SHELL_SCENES } from "../shell/router.js";
+import type { HomeSummary } from "../shell/state.js";
 
-const PRIMARY_SCENES = [
-  "home",
-  "chat",
-  "approvals",
-  "resume",
-  "review",
-  "settings",
-  "mcp",
-  "tasks",
-];
+export interface HomeSceneProps {
+  summary: HomeSummary;
+}
 
-export function HomeScene() {
+export function HomeScene({ summary }: HomeSceneProps) {
   return (
     <Box flexDirection="column">
       <Text>Home</Text>
-      <Text dimColor>统一 Shell 总览入口已经建立，后续场景会逐步迁入。</Text>
-      <Text>Scenes: {PRIMARY_SCENES.join(" | ")}</Text>
+      <Text>Session: {summary.sessionTitle}</Text>
+      <Text dimColor>Status: {summary.sessionStatus ?? "idle"}</Text>
+      <Text>Messages: {summary.messageCount}</Text>
+      <Text>Running tools: {summary.runningToolCount}</Text>
+      <Text>Pending approvals: {summary.pendingApprovalCount}</Text>
+      <Text>Review findings: {summary.reviewFindingCount}</Text>
+      <Text>
+        Tasks: pending={summary.taskCounts.pending} running={summary.taskCounts.running} awaiting=
+        {summary.taskCounts.awaiting_approval} completed={summary.taskCounts.completed} failed=
+        {summary.taskCounts.failed}
+      </Text>
+      {summary.lastResumeSessionId ? (
+        <Text>Last resume: {summary.lastResumeSessionId}</Text>
+      ) : (
+        <Text dimColor>No resumed session yet</Text>
+      )}
+      <Text>Scenes: {SHELL_SCENES.join(" | ")}</Text>
     </Box>
   );
 }
