@@ -1,9 +1,10 @@
-import { Box, Text } from "ink";
-import { useSyncExternalStore } from "react";
+import { Box, Text, useStdin } from "ink";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ShellFrame } from "./components/shell-frame.js";
 import { ChatScene } from "./scenes/chat.js";
 import { HomeScene } from "./scenes/home.js";
 import { PlaceholderScene } from "./scenes/placeholder.js";
+import { completeGotoCommand, parseGotoCommand } from "./shell/router.js";
 import type { ShellStore } from "./shell/store.js";
 import { createInitialShellState, selectHomeSummary, type ShellState } from "./shell/state.js";
 import type { TUIScene, TerminalCapabilities } from "./types.js";
@@ -12,7 +13,7 @@ export interface TUIAppProps {
   scene?: TUIScene;
   capabilities: TerminalCapabilities;
   shellState?: ShellState;
-  shellStore?: Pick<ShellStore, "getState" | "subscribe">;
+  shellStore?: Pick<ShellStore, "getState" | "subscribe" | "navigate">;
 }
 
 function renderScene(state: ShellState) {
@@ -33,6 +34,10 @@ function subscribeNoop(): () => void {
 
 export function TUIApp({ scene = "home", capabilities, shellState, shellStore }: TUIAppProps) {
   const fallbackState = shellState ?? createInitialShellState({ activeScene: scene });
+  const [composerDraft, setComposerDraft] = useState("");
+  const [composerNote, setComposerNote] = useState<string | undefined>();
+  const { stdin, setRawMode } = useStdin();
+  const composerDraftRef = useRef(composerDraft);
   const state = useSyncExternalStore(
     shellStore
       ? (onStoreChange) =>
@@ -44,6 +49,88 @@ export function TUIApp({ scene = "home", capabilities, shellState, shellStore }:
     shellStore ? () => shellStore.getState() : () => fallbackState,
   );
 
+  useEffect(() => {
+    composerDraftRef.current = composerDraft;
+  }, [composerDraft]);
+
+  useLayoutEffect(() => {
+    const supportsManagedRawMode =
+      typeof (stdin as NodeJS.ReadStream & { ref?: () => void }).ref === "function" &&
+      typeof (stdin as NodeJS.ReadStream & { unref?: () => void }).unref === "function" &&
+      typeof stdin.read === "function";
+
+    if (!stdin.isTTY || !supportsManagedRawMode) {
+      return;
+    }
+
+    setRawMode(true);
+
+    return () => {
+      setRawMode(false);
+    };
+  }, [stdin, setRawMode]);
+
+  useLayoutEffect(() => {
+    const handleData = (data: string | Buffer) => {
+      const input = Buffer.isBuffer(data) ? data.toString("utf8") : data;
+
+      if (input === "\u001B") {
+        setComposerDraft("");
+        setComposerNote(undefined);
+        return;
+      }
+
+      if (input === "\r" || input === "\n") {
+        const draft = composerDraftRef.current.trim();
+        if (!draft) {
+          return;
+        }
+
+        const targetScene = parseGotoCommand(draft);
+        if (targetScene && shellStore) {
+          shellStore.navigate(targetScene);
+          setComposerDraft("");
+          setComposerNote(`navigated: ${targetScene}`);
+          return;
+        }
+
+        if (draft.startsWith("/goto")) {
+          setComposerNote("unknown scene");
+          return;
+        }
+
+        setComposerNote("task execution bridge pending");
+        return;
+      }
+
+      if (input === "\t") {
+        const completed = completeGotoCommand(composerDraftRef.current);
+        if (completed) {
+          setComposerDraft(completed);
+          setComposerNote(undefined);
+        }
+        return;
+      }
+
+      if (input === "\b" || input === "\u007F") {
+        setComposerDraft((currentDraft) => currentDraft.slice(0, -1));
+        setComposerNote(undefined);
+        return;
+      }
+
+      if (/^[\x20-\x7E]+$/u.test(input)) {
+        setComposerDraft((currentDraft) => currentDraft + input);
+        setComposerNote(undefined);
+      }
+    };
+
+    stdin.on("data", handleData);
+
+    return () => {
+      stdin.removeListener("data", handleData);
+    };
+  }, [shellStore, stdin]);
+
   return (
     <Box flexDirection="column">
       <Text>Code Agent CLI</Text>
@@ -53,7 +140,12 @@ export function TUIApp({ scene = "home", capabilities, shellState, shellStore }:
       </Text>
       <Text dimColor>Reason: {capabilities.reason}</Text>
       <Box marginTop={1} flexDirection="column">
-        <ShellFrame state={state} capabilities={capabilities}>
+        <ShellFrame
+          state={state}
+          capabilities={capabilities}
+          composerDraft={composerDraft}
+          composerNote={composerNote}
+        >
           {renderScene(state)}
         </ShellFrame>
       </Box>

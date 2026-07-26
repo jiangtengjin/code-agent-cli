@@ -8,6 +8,12 @@ import { reduceShellState } from "../../../src/tui/shell/reducer.js";
 import { createInitialShellState } from "../../../src/tui/shell/state.js";
 import { createShellStore } from "../../../src/tui/shell/store.js";
 
+async function flushInput(): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
 describe("TUIApp", () => {
   it("renders the shell foundation and home overview from shell state", () => {
     const shellState = [
@@ -195,12 +201,70 @@ describe("TUIApp", () => {
         },
       }),
     );
-    await new Promise((resolve) => {
-      setTimeout(resolve, 0);
-    });
+    await flushInput();
 
     expect(result.lastFrame()).toContain("Current scene: chat");
     expect(result.lastFrame()).toContain("assistant: Store-driven update");
+    result.unmount();
+    store.dispose();
+  });
+
+  it("captures composer draft input and clears it with escape", async () => {
+    const store = createShellStore();
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: {
+          level: "full",
+          isTTY: true,
+          supportsAltScreen: true,
+          supportsColor: true,
+          reason: "interactive-terminal",
+        },
+        shellStore: store,
+      }),
+    );
+
+    result.stdin.write("hello tui");
+    await flushInput();
+
+    expect(result.lastFrame()).toContain("draft: hello tui");
+
+    result.stdin.write("\u001B");
+    await flushInput();
+
+    expect(result.lastFrame()).not.toContain("draft: hello tui");
+    result.unmount();
+    store.dispose();
+  });
+
+  it("routes scenes from the composer with /goto and tab completion", async () => {
+    const store = createShellStore();
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: {
+          level: "full",
+          isTTY: true,
+          supportsAltScreen: true,
+          supportsColor: true,
+          reason: "interactive-terminal",
+        },
+        shellStore: store,
+      }),
+    );
+
+    result.stdin.write("/goto app");
+    result.stdin.write("\t");
+    await flushInput();
+
+    expect(result.lastFrame()).toContain("draft: /goto approvals");
+
+    result.stdin.write("\r");
+    await flushInput();
+
+    expect(result.lastFrame()).toContain("Current scene: approvals");
+    expect(result.lastFrame()).toContain("> Approvals");
+    expect(result.lastFrame()).toContain("Approvals scene bootstrap pending");
+    expect(result.lastFrame()).not.toContain("draft: /goto approvals");
     result.unmount();
     store.dispose();
   });

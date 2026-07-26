@@ -15,9 +15,17 @@ import type { TerminalCapabilities } from "../types.js";
 export interface ShellFrameProps extends PropsWithChildren {
   state: ShellState;
   capabilities: TerminalCapabilities;
+  composerDraft: string;
+  composerNote?: string;
 }
 
-export function ShellFrame({ state, capabilities, children }: ShellFrameProps) {
+export function ShellFrame({
+  state,
+  capabilities,
+  children,
+  composerDraft,
+  composerNote,
+}: ShellFrameProps) {
   const statusSummary = selectStatusBarSummary(state);
   const railItems = selectRailItems(state);
   const inspectorSummary = selectInspectorSummary(state);
@@ -33,7 +41,7 @@ export function ShellFrame({ state, capabilities, children }: ShellFrameProps) {
         </Box>
         <Inspector summary={inspectorSummary} />
       </Box>
-      <Composer activeScene={state.activeScene} />
+      <Composer activeScene={state.activeScene} draft={composerDraft} note={composerNote} />
     </Box>
   );
 }

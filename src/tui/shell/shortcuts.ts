@@ -1,5 +1,6 @@
 export const SHELL_SHORTCUT_HINTS = [
-  "Ctrl+. commands",
-  "Ctrl+T mode",
+  "Tab complete",
+  "Enter route",
+  "Esc clear",
   "/goto <scene>",
 ] as const;
