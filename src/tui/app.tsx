@@ -1,9 +1,14 @@
 import { Box, Text, useStdin } from "ink";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ShellFrame } from "./components/shell-frame.js";
+import { ApprovalsScene } from "./scenes/approvals.js";
 import { ChatScene } from "./scenes/chat.js";
 import { HomeScene } from "./scenes/home.js";
+import { MCPScene } from "./scenes/mcp.js";
 import { PlaceholderScene } from "./scenes/placeholder.js";
+import { ResumeScene } from "./scenes/resume.js";
+import { ReviewScene } from "./scenes/review.js";
+import { SettingsScene } from "./scenes/settings.js";
 import { TasksScene } from "./scenes/tasks.js";
 import { completeGotoCommand, parseGotoCommand } from "./shell/router.js";
 import type { ShellStore } from "./shell/store.js";
@@ -41,6 +46,31 @@ function renderScene(state: ShellState) {
 
   if (state.activeScene === "tasks") {
     return <TasksScene summary={selectTaskBoardSummary(state)} />;
+  }
+
+  if (state.activeScene === "approvals") {
+    return <ApprovalsScene approvals={state.approvals} />;
+  }
+
+  if (state.activeScene === "resume") {
+    return <ResumeScene catalog={state.resumeCatalog} resume={state.resume} />;
+  }
+
+  if (state.activeScene === "review") {
+    return <ReviewScene findings={state.reviewFindings} />;
+  }
+
+  if (state.activeScene === "settings") {
+    return (
+      <SettingsScene
+        snapshot={state.configSnapshot}
+        validation={state.configValidation}
+      />
+    );
+  }
+
+  if (state.activeScene === "mcp") {
+    return <MCPScene servers={state.mcpServers} />;
   }
 
   return <PlaceholderScene scene={state.activeScene} />;

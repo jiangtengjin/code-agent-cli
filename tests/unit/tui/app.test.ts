@@ -276,6 +276,312 @@ describe("TUIApp", () => {
     result.unmount();
   });
 
+  it("renders the approvals scene with pending and resolved approval context", () => {
+    const shellState = [
+      createInteractionEvent(
+        "approval.requested",
+        {
+          request: {
+            id: "approval-1",
+            toolCall: {
+              id: "tool-1",
+              name: "write_file",
+              args: {
+                path: "src/tui/app.tsx",
+              },
+            },
+            title: "Approve write_file",
+            summary: "Update the shell renderer",
+            risk: "high",
+            workingDirectory: "D:/JAVA/code-agent-cli",
+          },
+        },
+        "2026-07-26T16:10:00.000Z",
+      ),
+      createInteractionEvent(
+        "approval.requested",
+        {
+          request: {
+            id: "approval-2",
+            toolCall: {
+              id: "tool-2",
+              name: "git show",
+              args: {
+                ref: "HEAD",
+              },
+            },
+            title: "Approve git show",
+            summary: "Inspect the latest commit",
+            risk: "low",
+          },
+        },
+        "2026-07-26T16:11:00.000Z",
+      ),
+      createInteractionEvent(
+        "approval.resolved",
+        {
+          requestId: "approval-2",
+          resolution: "approved",
+        },
+        "2026-07-26T16:11:30.000Z",
+      ),
+    ].reduce(
+      (state, event) => reduceShellState(state, createInteractionEventAction(event)),
+      reduceShellState(createInitialShellState(), createSceneChangedAction("approvals")),
+    );
+
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: {
+          level: "full",
+          isTTY: true,
+          supportsAltScreen: true,
+          supportsColor: true,
+          reason: "interactive-terminal",
+        },
+        shellState,
+      }),
+    );
+
+    expect(result.lastFrame()).toContain("Current scene: approvals");
+    expect(result.lastFrame()).toContain("> Approvals");
+    expect(result.lastFrame()).toContain("Approvals");
+    expect(result.lastFrame()).toContain("Pending: 1 | Resolved: 1");
+    expect(result.lastFrame()).toContain("Approve write_file [pending]");
+    expect(result.lastFrame()).toContain("Approve git show [approved]");
+    expect(result.lastFrame()).toContain("Update the shell renderer");
+    result.unmount();
+  });
+
+  it("renders the resume scene with catalog entries and resume context", () => {
+    const shellState = [
+      createInteractionEvent(
+        "resume.catalog.updated",
+        {
+          catalog: {
+            items: [
+              {
+                id: "session-11",
+                title: "Fix auth timeout",
+                mode: "plan",
+                status: "running",
+                updatedAt: "2026-07-26T16:20:00.000Z",
+                workspacePath: "D:/JAVA/code-agent-cli",
+              },
+              {
+                id: "session-10",
+                title: "Review MCP bootstrap",
+                mode: "normal",
+                status: "idle",
+                updatedAt: "2026-07-26T15:50:00.000Z",
+                workspacePath: "D:/JAVA/code-agent-cli",
+              },
+            ],
+          },
+        },
+        "2026-07-26T16:20:10.000Z",
+      ),
+      createInteractionEvent(
+        "resume.loaded",
+        {
+          sessionId: "session-11",
+          resumedFromInterrupted: true,
+        },
+        "2026-07-26T16:20:20.000Z",
+      ),
+    ].reduce(
+      (state, event) => reduceShellState(state, createInteractionEventAction(event)),
+      reduceShellState(createInitialShellState(), createSceneChangedAction("resume")),
+    );
+
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: {
+          level: "full",
+          isTTY: true,
+          supportsAltScreen: true,
+          supportsColor: true,
+          reason: "interactive-terminal",
+        },
+        shellState,
+      }),
+    );
+
+    expect(result.lastFrame()).toContain("Current scene: resume");
+    expect(result.lastFrame()).toContain("> Resume");
+    expect(result.lastFrame()).toContain("Resume");
+    expect(result.lastFrame()).toContain("Catalog: 2 sessions");
+    expect(result.lastFrame()).toContain("Last resumed: session-11");
+    expect(result.lastFrame()).toContain("Fix auth timeout [running]");
+    expect(result.lastFrame()).toContain("Review MCP bootstrap [idle]");
+    result.unmount();
+  });
+
+  it("renders the review scene with severity-first findings", () => {
+    const shellState = [
+      createInteractionEvent(
+        "review.findings.ready",
+        {
+          findings: [
+            {
+              id: "finding-1",
+              severity: "medium",
+              title: "Missing tests",
+              summary: "src/tui/app.tsx changed without matching tests",
+              filePath: "src/tui/app.tsx",
+            },
+            {
+              id: "finding-2",
+              severity: "high",
+              title: "Approval stuck",
+              summary: "Pending approvals can deadlock the shell",
+              filePath: "src/tui/adapters/chat-controller.ts",
+              line: 120,
+            },
+          ],
+        },
+        "2026-07-26T16:30:00.000Z",
+      ),
+    ].reduce(
+      (state, event) => reduceShellState(state, createInteractionEventAction(event)),
+      reduceShellState(createInitialShellState(), createSceneChangedAction("review")),
+    );
+
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: {
+          level: "full",
+          isTTY: true,
+          supportsAltScreen: true,
+          supportsColor: true,
+          reason: "interactive-terminal",
+        },
+        shellState,
+      }),
+    );
+
+    expect(result.lastFrame()).toContain("Current scene: review");
+    expect(result.lastFrame()).toContain("> Review");
+    expect(result.lastFrame()).toContain("Review");
+    expect(result.lastFrame()).toContain("Findings: 2");
+    expect(result.lastFrame()).toContain("Approval stuck [high]");
+    expect(result.lastFrame()).toContain("Missing tests [medium]");
+    result.unmount();
+  });
+
+  it("renders the settings scene with validation and diff context", () => {
+    const shellState = [
+      createInteractionEvent(
+        "config.snapshot.updated",
+        {
+          snapshot: {
+            filePath: "D:/tmp/config.jsonc",
+            config: {
+              model: {
+                provider: "deepseek",
+                model: "qwen-plus",
+              },
+            },
+            dirty: true,
+            diff: "-    \"model\": \"deepseek-chat\"\n+    \"model\": \"qwen-plus\"",
+            updatedAt: "2026-07-26T16:40:00.000Z",
+          },
+        },
+        "2026-07-26T16:40:00.000Z",
+      ),
+      createInteractionEvent(
+        "config.validation.updated",
+        {
+          validation: {
+            status: "invalid",
+            issues: [
+              {
+                path: "model.model",
+                message: "Unknown model alias",
+                severity: "error",
+              },
+            ],
+          },
+        },
+        "2026-07-26T16:40:10.000Z",
+      ),
+    ].reduce(
+      (state, event) => reduceShellState(state, createInteractionEventAction(event)),
+      reduceShellState(createInitialShellState(), createSceneChangedAction("settings")),
+    );
+
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: {
+          level: "full",
+          isTTY: true,
+          supportsAltScreen: true,
+          supportsColor: true,
+          reason: "interactive-terminal",
+        },
+        shellState,
+      }),
+    );
+
+    expect(result.lastFrame()).toContain("Current scene: settings");
+    expect(result.lastFrame()).toContain("> Settings");
+    expect(result.lastFrame()).toContain("Settings");
+    expect(result.lastFrame()).toContain("dirty: yes");
+    expect(result.lastFrame()).toContain("validation: invalid");
+    expect(result.lastFrame()).toContain("Unknown model alias");
+    expect(result.lastFrame()).toContain("+    \"model\": \"qwen-plus\"");
+    result.unmount();
+  });
+
+  it("renders the mcp scene with server health summaries", () => {
+    const shellState = [
+      createInteractionEvent(
+        "mcp.health.updated",
+        {
+          servers: [
+            {
+              serverName: "filesystem",
+              status: "healthy",
+              toolCount: 4,
+            },
+            {
+              serverName: "github",
+              status: "degraded",
+              toolCount: 2,
+              message: "Heartbeat timeout",
+            },
+          ],
+        },
+        "2026-07-26T16:50:00.000Z",
+      ),
+    ].reduce(
+      (state, event) => reduceShellState(state, createInteractionEventAction(event)),
+      reduceShellState(createInitialShellState(), createSceneChangedAction("mcp")),
+    );
+
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: {
+          level: "full",
+          isTTY: true,
+          supportsAltScreen: true,
+          supportsColor: true,
+          reason: "interactive-terminal",
+        },
+        shellState,
+      }),
+    );
+
+    expect(result.lastFrame()).toContain("Current scene: mcp");
+    expect(result.lastFrame()).toContain("> MCP");
+    expect(result.lastFrame()).toContain("MCP");
+    expect(result.lastFrame()).toContain("Servers: 2 | Healthy: 1 | Degraded: 1");
+    expect(result.lastFrame()).toContain("filesystem [healthy]");
+    expect(result.lastFrame()).toContain("github [degraded]");
+    expect(result.lastFrame()).toContain("Heartbeat timeout");
+    result.unmount();
+  });
+
   it("updates the rendered scene when driven by a shell store", async () => {
     const store = createShellStore();
     const result = render(
@@ -364,7 +670,8 @@ describe("TUIApp", () => {
 
     expect(result.lastFrame()).toContain("Current scene: approvals");
     expect(result.lastFrame()).toContain("> Approvals");
-    expect(result.lastFrame()).toContain("Approvals scene bootstrap pending");
+    expect(result.lastFrame()).toContain("Pending: 0 | Resolved: 0");
+    expect(result.lastFrame()).toContain("No approvals yet");
     expect(result.lastFrame()).not.toContain("draft: /goto approvals");
     result.unmount();
     store.dispose();
