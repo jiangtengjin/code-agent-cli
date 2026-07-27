@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createProgram } from "../../src/cli/commands.js";
 
 const cliMocks = vi.hoisted(() => ({
@@ -6,6 +6,14 @@ const cliMocks = vi.hoisted(() => ({
   runPrompt: vi.fn(),
   startChat: vi.fn(),
   startInteractiveShell: vi.fn(),
+  setupWizard: vi.fn(),
+}));
+
+const configMocks = vi.hoisted(() => ({
+  configEdit: vi.fn(),
+  configGet: vi.fn(),
+  configList: vi.fn(),
+  configSet: vi.fn(),
 }));
 
 const mcpMocks = vi.hoisted(() => ({
@@ -29,6 +37,17 @@ vi.mock("../../src/tui/bootstrap.js", () => ({
   startInteractiveShell: cliMocks.startInteractiveShell,
 }));
 
+vi.mock("../../src/config/wizard.js", () => ({
+  setupWizard: cliMocks.setupWizard,
+}));
+
+vi.mock("../../src/cli/config.js", () => ({
+  configEdit: configMocks.configEdit,
+  configGet: configMocks.configGet,
+  configList: configMocks.configList,
+  configSet: configMocks.configSet,
+}));
+
 vi.mock("../../src/cli/mcp.js", () => ({
   mcpAdd: mcpMocks.mcpAdd,
   mcpList: mcpMocks.mcpList,
@@ -36,10 +55,36 @@ vi.mock("../../src/cli/mcp.js", () => ({
 }));
 
 describe("CLI command framework", () => {
+  const originalStdoutIsTTY = process.stdout.isTTY;
+  const originalStdinIsTTY = process.stdin.isTTY;
+
+  function setInteractiveTerminal(isInteractive: boolean) {
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: isInteractive,
+    });
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      value: isInteractive,
+    });
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
+    setInteractiveTerminal(true);
     cliMocks.resolve.mockResolvedValue({
       model: { provider: "deepseek", model: "test", apiKey: "sk-test" },
+    });
+  });
+
+  afterAll(() => {
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: originalStdoutIsTTY,
+    });
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      value: originalStdinIsTTY,
     });
   });
 
@@ -87,8 +132,9 @@ describe("CLI command framework", () => {
 
   it("config subcommand includes set/get/list/edit", () => {
     const program = createProgram();
-    const configCmd = program.commands.find((cmd) => cmd.name() === "config")!;
-    const subCmdNames = configCmd.commands.map((c) => c.name());
+    const configCmd = program.commands.find((cmd) => cmd.name() === "config");
+    expect(configCmd).toBeDefined();
+    const subCmdNames = (configCmd ?? { commands: [] }).commands.map((cmd) => cmd.name());
 
     expect(subCmdNames).toContain("set");
     expect(subCmdNames).toContain("get");
@@ -98,8 +144,9 @@ describe("CLI command framework", () => {
 
   it("mcp subcommand includes add/remove/list", () => {
     const program = createProgram();
-    const mcpCmd = program.commands.find((cmd) => cmd.name() === "mcp")!;
-    const subCmdNames = mcpCmd.commands.map((c) => c.name());
+    const mcpCmd = program.commands.find((cmd) => cmd.name() === "mcp");
+    expect(mcpCmd).toBeDefined();
+    const subCmdNames = (mcpCmd ?? { commands: [] }).commands.map((cmd) => cmd.name());
 
     expect(subCmdNames).toContain("add");
     expect(subCmdNames).toContain("remove");
@@ -108,13 +155,15 @@ describe("CLI command framework", () => {
 
   it("includes all global options", () => {
     const program = createProgram();
-    const opts = program.options.map((o) => o.long);
+    const opts = program.options.map((option) => option.long);
 
     expect(opts).toContain("--prompt");
     expect(opts).toContain("--mode");
     expect(opts).toContain("--model");
     expect(opts).toContain("--yolo");
     expect(opts).toContain("--continue");
+    expect(opts).toContain("--plain-ui");
+    expect(opts).toContain("--no-alt-screen");
     expect(opts).toContain("--debug");
     expect(opts).toContain("--version");
   });
@@ -150,37 +199,156 @@ describe("CLI command framework", () => {
     expect(cliMocks.startChat).not.toHaveBeenCalled();
   });
 
-  it("passes the continue intent to interactive chat startup", async () => {
+  it("passes the continue intent to the unified tui startup", async () => {
     const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
     cliMocks.resolve.mockResolvedValue(config);
     const program = createProgram();
 
     await program.parseAsync(["--continue"], { from: "user" });
 
-    expect(cliMocks.startChat).toHaveBeenCalledWith(config, {
+    expect(cliMocks.startInteractiveShell).toHaveBeenCalledWith(config, {
       continueLast: true,
+      initialScene: "chat",
     });
-    expect(cliMocks.startInteractiveShell).not.toHaveBeenCalled();
+    expect(cliMocks.startChat).not.toHaveBeenCalled();
   });
 
-  it("resumes the latest session from the resume subcommand", async () => {
+  it("passes plain ui terminal flags into the interactive shell", async () => {
+    const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
+    cliMocks.resolve.mockResolvedValue(config);
+    const program = createProgram();
+
+    await program.parseAsync(["--plain-ui", "--no-alt-screen"], { from: "user" });
+
+    expect(cliMocks.startInteractiveShell).toHaveBeenCalledWith(config, {
+      plainUi: true,
+      noAltScreen: true,
+    });
+  });
+
+  it("resumes the latest session from the resume subcommand inside tui", async () => {
     const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
     cliMocks.resolve.mockResolvedValue(config);
     const program = createProgram();
 
     await program.parseAsync(["resume", "--last"], { from: "user" });
 
-    expect(cliMocks.startChat).toHaveBeenCalledWith(config, {
-      continueLast: false,
+    expect(cliMocks.startInteractiveShell).toHaveBeenCalledWith(config, {
+      initialScene: "chat",
       resumeLast: true,
-      resumeAll: false,
-      resumeQuery: undefined,
-      resumePicker: false,
-      resumeFork: false,
     });
   });
 
-  it("resumes a matching session by query", async () => {
+  it("resumes a matching session by query inside tui", async () => {
+    const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
+    cliMocks.resolve.mockResolvedValue(config);
+    const program = createProgram();
+
+    await program.parseAsync(["resume", "fix-auth-timeout", "--all"], { from: "user" });
+
+    expect(cliMocks.startInteractiveShell).toHaveBeenCalledWith(config, {
+      initialScene: "chat",
+      resumeAll: true,
+      resumeQuery: "fix-auth-timeout",
+    });
+  });
+
+  it("opens the resume scene when no query is provided", async () => {
+    const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
+    cliMocks.resolve.mockResolvedValue(config);
+    const program = createProgram();
+
+    await program.parseAsync(["resume"], { from: "user" });
+
+    expect(cliMocks.startInteractiveShell).toHaveBeenCalledWith(config, {
+      initialScene: "resume",
+      resumePicker: true,
+    });
+  });
+
+  it("forks from the matched session when resume --fork is provided", async () => {
+    const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
+    cliMocks.resolve.mockResolvedValue(config);
+    const program = createProgram();
+
+    await program.parseAsync(["resume", "fix-auth-timeout", "--fork"], { from: "user" });
+
+    expect(cliMocks.startInteractiveShell).toHaveBeenCalledWith(config, {
+      initialScene: "chat",
+      resumeQuery: "fix-auth-timeout",
+      resumeFork: true,
+    });
+  });
+
+  it("opens the settings scene for the bare config command in an interactive terminal", async () => {
+    const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
+    cliMocks.resolve.mockResolvedValue(config);
+    const program = createProgram();
+
+    await program.parseAsync(["config"], { from: "user" });
+
+    expect(cliMocks.startInteractiveShell).toHaveBeenCalledWith(config, {
+      initialScene: "settings",
+    });
+  });
+
+  it("opens the mcp scene for the bare mcp command in an interactive terminal", async () => {
+    const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
+    cliMocks.resolve.mockResolvedValue(config);
+    const program = createProgram();
+
+    await program.parseAsync(["mcp"], { from: "user" });
+
+    expect(cliMocks.startInteractiveShell).toHaveBeenCalledWith(config, {
+      initialScene: "mcp",
+    });
+  });
+
+  it("routes init into the settings scene in an interactive terminal", async () => {
+    const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
+    cliMocks.resolve.mockResolvedValue(config);
+    const program = createProgram();
+
+    await program.parseAsync(["init"], { from: "user" });
+
+    expect(cliMocks.startInteractiveShell).toHaveBeenCalledWith(config, {
+      initialScene: "settings",
+    });
+    expect(cliMocks.setupWizard).not.toHaveBeenCalled();
+  });
+
+  it("falls back to config list for the bare config command outside an interactive terminal", async () => {
+    setInteractiveTerminal(false);
+    const program = createProgram();
+
+    await program.parseAsync(["config"], { from: "user" });
+
+    expect(configMocks.configList).toHaveBeenCalledTimes(1);
+    expect(cliMocks.startInteractiveShell).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the MCP list command outside an interactive terminal", async () => {
+    setInteractiveTerminal(false);
+    const program = createProgram();
+
+    await program.parseAsync(["mcp"], { from: "user" });
+
+    expect(mcpMocks.mcpList).toHaveBeenCalledTimes(1);
+    expect(cliMocks.startInteractiveShell).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the setup wizard for init outside an interactive terminal", async () => {
+    setInteractiveTerminal(false);
+    const program = createProgram();
+
+    await program.parseAsync(["init"], { from: "user" });
+
+    expect(cliMocks.setupWizard).toHaveBeenCalledTimes(1);
+    expect(cliMocks.startInteractiveShell).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the legacy resume flow outside an interactive terminal", async () => {
+    setInteractiveTerminal(false);
     const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
     cliMocks.resolve.mockResolvedValue(config);
     const program = createProgram();
@@ -195,40 +363,7 @@ describe("CLI command framework", () => {
       resumePicker: false,
       resumeFork: false,
     });
-  });
-
-  it("opens the resume selector when no query is provided", async () => {
-    const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
-    cliMocks.resolve.mockResolvedValue(config);
-    const program = createProgram();
-
-    await program.parseAsync(["resume"], { from: "user" });
-
-    expect(cliMocks.startChat).toHaveBeenCalledWith(config, {
-      continueLast: false,
-      resumeLast: false,
-      resumeAll: false,
-      resumeQuery: undefined,
-      resumePicker: true,
-      resumeFork: false,
-    });
-  });
-
-  it("forks from the matched session when resume --fork is provided", async () => {
-    const config = { model: { provider: "deepseek", model: "test", apiKey: "sk-test" } };
-    cliMocks.resolve.mockResolvedValue(config);
-    const program = createProgram();
-
-    await program.parseAsync(["resume", "fix-auth-timeout", "--fork"], { from: "user" });
-
-    expect(cliMocks.startChat).toHaveBeenCalledWith(config, {
-      continueLast: false,
-      resumeLast: false,
-      resumeAll: false,
-      resumeQuery: "fix-auth-timeout",
-      resumePicker: false,
-      resumeFork: true,
-    });
+    expect(cliMocks.startInteractiveShell).not.toHaveBeenCalled();
   });
 
   it("passes through child command flags for mcp add", async () => {

@@ -2,16 +2,16 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { LLMProvider } from "../../../../src/llm/provider.js";
-import { InteractionEventEmitter } from "../../../../src/interaction/emitter.js";
-import { ToolRegistry } from "../../../../src/tools/registry.js";
-import { SessionStore } from "../../../../src/session/store.js";
-import { createSessionState } from "../../../../src/session/runtime.js";
 import { writeConfigFile } from "../../../../src/config/manager.js";
+import { InteractionEventEmitter } from "../../../../src/interaction/emitter.js";
+import type { ReviewFinding } from "../../../../src/interaction/events.js";
+import type { LLMProvider } from "../../../../src/llm/provider.js";
+import { createSessionState } from "../../../../src/session/runtime.js";
+import { SessionStore } from "../../../../src/session/store.js";
+import { ToolRegistry } from "../../../../src/tools/registry.js";
 import { createTUIChatController } from "../../../../src/tui/adapters/chat-controller.js";
 import { createShellStore } from "../../../../src/tui/shell/store.js";
 import type { Config } from "../../../../src/types/config.js";
-import type { ReviewFinding } from "../../../../src/interaction/events.js";
 
 async function flushAsyncWork(): Promise<void> {
   await new Promise((resolve) => {
@@ -304,6 +304,134 @@ describe("createTUIChatController", () => {
     }
   });
 
+  it("restores a matching session across workspaces when resumeAll is enabled", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "code-agent-tui-resume-all-"));
+    try {
+      const sessionStore = new SessionStore(tempDir);
+      const sessionState = createSessionState({
+        sessionId: "resume-session-cross-workspace",
+        kind: "interactive",
+        mode: "edit",
+        workspaceKey: "workspace-b",
+        workspacePath: "D:/JAVA/other-workspace",
+        now: "2026-07-25T11:00:00.000Z",
+      });
+      sessionState.messages = [
+        {
+          role: "user",
+          content: "Fix auth timeout",
+        },
+        {
+          role: "assistant",
+          content: "Loaded from another workspace",
+        },
+      ];
+      sessionState.title = "";
+      await sessionStore.saveSession(sessionState);
+
+      const emitter = new InteractionEventEmitter();
+      const store = createShellStore({ emitter });
+      const controller = createTUIChatController(config, {
+        eventEmitter: emitter,
+        resolveWorkspace: async () => ({
+          key: "workspace-a",
+          path: "D:/JAVA/code-agent-cli",
+        }),
+        sessionsStorePath: tempDir,
+        now: () => "2026-07-26T12:25:00.000Z",
+      });
+
+      await controller.initialize({
+        startOptions: {
+          resumeAll: true,
+          resumeQuery: "fix auth",
+        },
+      });
+
+      expect(store.getState().currentSession).toMatchObject({
+        id: "resume-session-cross-workspace",
+        title: "Fix auth timeout",
+        workspacePath: "D:/JAVA/other-workspace",
+        mode: "edit",
+      });
+      expect(store.getState().chat.messages.map((message) => message.text)).toEqual([
+        "Fix auth timeout",
+        "Loaded from another workspace",
+      ]);
+      store.dispose();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("forks the matched session during initialization when resumeFork is enabled", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "code-agent-tui-resume-fork-"));
+    try {
+      const sessionStore = new SessionStore(tempDir);
+      const sessionState = createSessionState({
+        sessionId: "resume-session-parent",
+        kind: "interactive",
+        mode: "plan",
+        workspaceKey: "workspace-a",
+        workspacePath: "D:/JAVA/code-agent-cli",
+        now: "2026-07-25T12:00:00.000Z",
+      });
+      sessionState.messages = [
+        {
+          role: "user",
+          content: "Fix auth timeout",
+        },
+        {
+          role: "assistant",
+          content: "Parent session content",
+        },
+      ];
+      sessionState.title = "";
+      await sessionStore.saveSession(sessionState);
+
+      const emitter = new InteractionEventEmitter();
+      const store = createShellStore({ emitter });
+      const controller = createTUIChatController(config, {
+        eventEmitter: emitter,
+        resolveWorkspace: async () => ({
+          key: "workspace-a",
+          path: "D:/JAVA/code-agent-cli",
+        }),
+        sessionsStorePath: tempDir,
+        createSessionId: () => "resume-session-fork",
+        now: () => "2026-07-26T12:27:00.000Z",
+      });
+
+      await controller.initialize({
+        startOptions: {
+          resumeFork: true,
+          resumeQuery: "fix auth",
+        },
+      });
+
+      expect(store.getState().currentSession).toMatchObject({
+        id: "resume-session-fork",
+        title: "Fix auth timeout",
+        parentSessionId: "resume-session-parent",
+        mode: "plan",
+      });
+      expect(store.getState().chat.messages.map((message) => message.text)).toEqual([
+        "Fix auth timeout",
+        "Parent session content",
+      ]);
+
+      const forkedState = await sessionStore.loadSession("resume-session-fork");
+      expect(forkedState).toMatchObject({
+        sessionId: "resume-session-fork",
+        parentSessionId: "resume-session-parent",
+        workspaceKey: "workspace-a",
+      });
+      store.dispose();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("edits, validates, and saves config from shell commands", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "code-agent-tui-config-"));
     const configPath = join(tempDir, "config.jsonc");
@@ -331,14 +459,16 @@ describe("createTUIChatController", () => {
       }),
     });
 
-    await expect(controller.executeCommand('/config set model.model "qwen-plus"')).resolves.toMatchObject({
+    await expect(
+      controller.executeCommand('/config set model.model "qwen-plus"'),
+    ).resolves.toMatchObject({
       handled: true,
       note: "config updated: model.model",
     });
 
     expect(store.getState().configSnapshot).toMatchObject({
       dirty: true,
-      diff: expect.stringContaining("+    \"model\": \"qwen-plus\""),
+      diff: expect.stringContaining('+    "model": "qwen-plus"'),
     });
 
     await expect(controller.executeCommand("/config save")).resolves.toMatchObject({

@@ -16,13 +16,17 @@ import { executeApprovedPlan } from "../../modes/plan.js";
 import { ModeRouter } from "../../modes/router.js";
 import { createTaskTiming } from "../../session/execution.js";
 import { SessionPersistence } from "../../session/persistence.js";
-import { createSessionState, createSessionSummary } from "../../session/runtime.js";
+import {
+  createSessionState,
+  createSessionSummary,
+  forkSessionState,
+} from "../../session/runtime.js";
 import { SessionStore } from "../../session/store.js";
 import { UsageTracker } from "../../session/usage.js";
-import { resolveWorkspace, type WorkspaceInfo } from "../../session/workspace.js";
+import { type WorkspaceInfo, resolveWorkspace } from "../../session/workspace.js";
 import { createDefaultToolRegistry } from "../../tools/built-in/index.js";
 import { MCPServerManager } from "../../tools/mcp/manager.js";
-import { ToolRegistry } from "../../tools/registry.js";
+import type { ToolRegistry } from "../../tools/registry.js";
 import type { Config } from "../../types/config.js";
 import type { ChatMode } from "../../types/mode.js";
 import type { PlanState } from "../../types/plan.js";
@@ -36,12 +40,19 @@ export interface TUIChatControllerInitializeOptions {
   startOptions?: {
     continueLast?: boolean;
     resumeLast?: boolean;
+    resumeAll?: boolean;
     resumeQuery?: string;
+    resumePicker?: boolean;
+    resumeFork?: boolean;
     plainUi?: boolean;
     noAltScreen?: boolean;
     initialScene?: TUIScene;
   };
 }
+
+type TUIChatControllerStartOptions = NonNullable<
+  TUIChatControllerInitializeOptions["startOptions"]
+>;
 
 export interface TUICommandResult {
   handled: boolean;
@@ -241,6 +252,35 @@ function mapSessionToResumeItem(session: SessionSummary) {
   };
 }
 
+function normalizeInterruptedSession(session: SessionState): {
+  session: SessionState;
+  resumedFromInterrupted: boolean;
+} {
+  if (session.status !== "interrupted") {
+    return {
+      session,
+      resumedFromInterrupted: false,
+    };
+  }
+
+  const normalized = structuredClone(session);
+  normalized.status = "idle";
+
+  if (normalized.pendingPlan) {
+    for (const step of normalized.pendingPlan.steps) {
+      if (step.status === "running") {
+        step.status = "pending";
+        step.error = undefined;
+      }
+    }
+  }
+
+  return {
+    session: normalized,
+    resumedFromInterrupted: true,
+  };
+}
+
 class DefaultTUIChatController implements TUIChatController {
   private readonly emitter: InteractionEventEmitter;
   private readonly interaction: InteractionEventBridge;
@@ -320,13 +360,13 @@ class DefaultTUIChatController implements TUIChatController {
     await this.ensureInitialized();
 
     if (options.startOptions?.continueLast || options.startOptions?.resumeLast) {
-      await this.restoreLatestSession();
+      await this.restoreLatestSession(options.startOptions);
     } else if (typeof options.startOptions?.resumeQuery === "string") {
-      await this.restoreSessionByQuery(options.startOptions.resumeQuery);
+      await this.restoreSessionByQuery(options.startOptions.resumeQuery, options.startOptions);
     }
 
-    if (options.initialScene === "resume") {
-      await this.refreshResumeCatalog();
+    if (options.initialScene === "resume" || options.startOptions?.resumePicker) {
+      await this.refreshResumeCatalog(options.startOptions);
     }
 
     if (options.initialScene === "settings" || options.initialScene === "mcp") {
@@ -471,7 +511,9 @@ class DefaultTUIChatController implements TUIChatController {
         : result.planState
           ? "awaiting_approval"
           : "completed";
-      const detail = result.reachedLimit ? lastWarning ?? "Reached max execution steps." : result.detail;
+      const detail = result.reachedLimit
+        ? (lastWarning ?? "Reached max execution steps.")
+        : result.detail;
 
       this.interaction.taskUpdated({
         id: taskId,
@@ -725,7 +767,9 @@ class DefaultTUIChatController implements TUIChatController {
     };
   }
 
-  private async refreshResumeCatalog(): Promise<void> {
+  private async refreshResumeCatalog(
+    startOptions: TUIChatControllerStartOptions = {},
+  ): Promise<void> {
     const sessionStore = this.getSessionStore();
     if (!sessionStore) {
       this.interaction.resumeCatalogUpdated({
@@ -736,7 +780,7 @@ class DefaultTUIChatController implements TUIChatController {
 
     const workspace = await this.getWorkspaceInfo();
     const sessions = await sessionStore.listSessions({
-      workspaceKey: workspace.key,
+      workspaceKey: startOptions.resumeAll ? undefined : workspace.key,
       kind: "interactive",
     });
     this.interaction.resumeCatalogUpdated({
@@ -744,7 +788,9 @@ class DefaultTUIChatController implements TUIChatController {
     });
   }
 
-  private async restoreLatestSession(): Promise<void> {
+  private async restoreLatestSession(
+    startOptions: TUIChatControllerStartOptions = {},
+  ): Promise<void> {
     const sessionStore = this.getSessionStore();
     if (!sessionStore) {
       return;
@@ -754,15 +800,19 @@ class DefaultTUIChatController implements TUIChatController {
     const summary = await sessionStore.findLatestSession({
       workspaceKey: workspace.key,
       kind: "interactive",
+      includeAllWorkspaces: Boolean(startOptions.resumeAll),
     });
     if (!summary) {
       return;
     }
 
-    await this.restoreSessionSummary(summary);
+    await this.restoreSessionSummary(summary, startOptions);
   }
 
-  private async restoreSessionByQuery(query: string): Promise<void> {
+  private async restoreSessionByQuery(
+    query: string,
+    startOptions: TUIChatControllerStartOptions = {},
+  ): Promise<void> {
     const normalizedQuery = query.trim();
     if (!normalizedQuery) {
       throw new Error("Resume query cannot be empty.");
@@ -777,28 +827,37 @@ class DefaultTUIChatController implements TUIChatController {
     const summary = await sessionStore.findSessionByQuery(normalizedQuery, {
       workspaceKey: workspace.key,
       kind: "interactive",
+      includeAllWorkspaces: Boolean(startOptions.resumeAll),
     });
     if (!summary) {
       throw new Error(`Session not found: ${normalizedQuery}`);
     }
 
-    await this.restoreSessionSummary(summary);
+    await this.restoreSessionSummary(summary, startOptions);
   }
 
-  private async restoreSessionSummary(summary: SessionSummary): Promise<void> {
+  private async restoreSessionSummary(
+    summary: SessionSummary,
+    startOptions: TUIChatControllerStartOptions = {},
+  ): Promise<void> {
     const sessionStore = this.getSessionStore();
-    const session = await sessionStore?.loadSession(summary.id);
-    if (!session) {
+    const loadedSession = await sessionStore?.loadSession(summary.id);
+    if (!loadedSession || !sessionStore) {
       throw new Error(`Session not found: ${summary.id}`);
     }
 
-    this.runtimeSession = structuredClone(session);
-    this.messages = [...session.messages];
-    this.pendingPlan = session.pendingPlan;
-    this.status = session.status;
-    this.mode = session.mode;
-    this.usageTracker.restore(session.usage);
-    this.costTracker.restore(session.cost);
+    const normalized = normalizeInterruptedSession(loadedSession);
+    const restoredSession = startOptions.resumeFork
+      ? await this.forkLoadedSession(sessionStore, normalized.session)
+      : normalized.session;
+
+    this.runtimeSession = structuredClone(restoredSession);
+    this.messages = [...restoredSession.messages];
+    this.pendingPlan = restoredSession.pendingPlan;
+    this.status = restoredSession.status;
+    this.mode = restoredSession.mode;
+    this.usageTracker.restore(restoredSession.usage);
+    this.costTracker.restore(restoredSession.cost);
     this.persistence.hydrate?.(this.runtimeSession);
     this.lastSessionDigest = undefined;
     this.emitSessionSummary();
@@ -806,10 +865,30 @@ class DefaultTUIChatController implements TUIChatController {
       this.interaction.messageAdded(message);
     }
     this.trackedMessages.setTrackedCount(this.messages.length);
-    this.interaction.resumeLoaded(session.sessionId, {
-      resumedFromInterrupted: session.status === "interrupted",
-      forkedFromSessionId: session.parentSessionId,
+    this.interaction.resumeLoaded(restoredSession.sessionId, {
+      resumedFromInterrupted: normalized.resumedFromInterrupted,
+      forkedFromSessionId: restoredSession.parentSessionId,
     });
+  }
+
+  private async forkLoadedSession(
+    sessionStore: SessionStore,
+    source: SessionState,
+  ): Promise<SessionState> {
+    const now = this.now();
+    const forked = forkSessionState(source, {
+      sessionId: this.createSessionId(),
+      now,
+    });
+
+    await sessionStore.saveSession(forked);
+    await sessionStore.appendEvent(forked.sessionId, {
+      type: "fork",
+      createdAt: now,
+      parentSessionId: source.sessionId,
+    });
+
+    return forked;
   }
 
   private async loadConfigSnapshot(): Promise<void> {

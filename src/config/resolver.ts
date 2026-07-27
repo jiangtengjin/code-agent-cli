@@ -20,6 +20,8 @@ import {
 export interface CLIOptions {
   prompt?: string;
   continue?: boolean;
+  plainUi?: boolean;
+  noAltScreen?: boolean;
   mode?: ChatMode;
   model?: string;
   yolo?: boolean;

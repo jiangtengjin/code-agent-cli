@@ -16,8 +16,14 @@ function parseChatMode(value: unknown): ChatMode | undefined {
 }
 
 export function parseCLIOptions(raw: Record<string, unknown>): CLIOptions {
+  const noAltScreen =
+    (raw.noAltScreen as boolean | undefined) ?? (raw.altScreen === false ? true : undefined);
+
   return {
     prompt: raw.prompt as string | undefined,
+    continue: raw.continue as boolean | undefined,
+    plainUi: raw.plainUi as boolean | undefined,
+    noAltScreen,
     mode: parseChatMode(raw.mode),
     model: raw.model as string | undefined,
     yolo: raw.yolo as boolean | undefined,
