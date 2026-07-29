@@ -644,6 +644,29 @@ describe("TUIApp", () => {
     store.dispose();
   });
 
+  it("accepts multibyte CJK input in the composer draft", async () => {
+    const store = createShellStore();
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: {
+          level: "full",
+          isTTY: true,
+          supportsAltScreen: true,
+          supportsColor: true,
+          reason: "interactive-terminal",
+        },
+        shellStore: store,
+      }),
+    );
+
+    result.stdin.write("统一 tui");
+    await flushInput();
+
+    expect(result.lastFrame()).toContain("draft: 统一 tui");
+    result.unmount();
+    store.dispose();
+  });
+
   it("routes scenes from the composer with /goto and tab completion", async () => {
     const store = createShellStore();
     const result = render(

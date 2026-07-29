@@ -11,13 +11,14 @@ import { ReviewScene } from "./scenes/review.js";
 import { SettingsScene } from "./scenes/settings.js";
 import { TasksScene } from "./scenes/tasks.js";
 import { completeGotoCommand, parseGotoCommand } from "./shell/router.js";
-import type { ShellStore } from "./shell/store.js";
+import { dispatchShortcut, normalizeKeyInput } from "./shell/shortcuts.js";
 import {
+  type ShellState,
   createInitialShellState,
   selectHomeSummary,
   selectTaskBoardSummary,
-  type ShellState,
 } from "./shell/state.js";
+import type { ShellStore } from "./shell/store.js";
 import type { TUIScene, TerminalCapabilities } from "./types.js";
 
 export interface TUIAppProps {
@@ -26,13 +27,13 @@ export interface TUIAppProps {
   shellState?: ShellState;
   shellStore?: Pick<ShellStore, "getState" | "subscribe" | "navigate">;
   onSubmitTask?: (input: string) => Promise<unknown> | unknown;
-  onExecuteCommand?: (
-    input: string,
-  ) => Promise<{ handled: boolean; note?: string; navigateTo?: TUIScene }> | {
-    handled: boolean;
-    note?: string;
-    navigateTo?: TUIScene;
-  };
+  onExecuteCommand?: (input: string) =>
+    | Promise<{ handled: boolean; note?: string; navigateTo?: TUIScene }>
+    | {
+        handled: boolean;
+        note?: string;
+        navigateTo?: TUIScene;
+      };
 }
 
 function renderScene(state: ShellState) {
@@ -61,12 +62,7 @@ function renderScene(state: ShellState) {
   }
 
   if (state.activeScene === "settings") {
-    return (
-      <SettingsScene
-        snapshot={state.configSnapshot}
-        validation={state.configValidation}
-      />
-    );
+    return <SettingsScene snapshot={state.configSnapshot} validation={state.configValidation} />;
   }
 
   if (state.activeScene === "mcp") {
@@ -133,74 +129,33 @@ export function TUIApp({
   }, [stdin, setRawMode]);
 
   useLayoutEffect(() => {
-    const handleData = (data: string | Buffer) => {
-      const input = Buffer.isBuffer(data) ? data.toString("utf8") : data;
-
-      if (input === "\u001B") {
+    const submitDraft = (draft: string) => {
+      const targetScene = parseGotoCommand(draft);
+      if (targetScene && shellStore) {
+        shellStore.navigate(targetScene);
         setComposerDraft("");
-        setComposerNote(undefined);
+        setComposerNote(`navigated: ${targetScene}`);
         return;
       }
 
-      if (input === "\r" || input === "\n") {
-        const draft = composerDraftRef.current.trim();
-        if (!draft) {
-          return;
-        }
+      if (draft.startsWith("/goto")) {
+        setComposerNote("unknown scene");
+        return;
+      }
 
-        const targetScene = parseGotoCommand(draft);
-        if (targetScene && shellStore) {
-          shellStore.navigate(targetScene);
+      if (draft.startsWith("/")) {
+        if (onExecuteCommand) {
           setComposerDraft("");
-          setComposerNote(`navigated: ${targetScene}`);
-          return;
-        }
-
-        if (draft.startsWith("/goto")) {
-          setComposerNote("unknown scene");
-          return;
-        }
-
-        if (draft.startsWith("/")) {
-          if (onExecuteCommand) {
-            setComposerDraft("");
-            setComposerNote("executing command...");
-            Promise.resolve(onExecuteCommand(draft))
-              .then((result) => {
-                if (!isMountedRef.current) {
-                  return;
-                }
-                if (result.navigateTo) {
-                  shellStore?.navigate(result.navigateTo);
-                }
-                setComposerNote(result.note);
-              })
-              .catch((error: unknown) => {
-                if (!isMountedRef.current) {
-                  return;
-                }
-                if (!composerDraftRef.current) {
-                  setComposerDraft(draft);
-                }
-                setComposerNote(error instanceof Error ? error.message : String(error));
-              });
-            return;
-          }
-
-          setComposerNote("command bridge pending");
-          return;
-        }
-
-        if (onSubmitTask) {
-          shellStore?.navigate("chat");
-          setComposerDraft("");
-          setComposerNote("executing task...");
-          Promise.resolve(onSubmitTask(draft))
-            .then(() => {
+          setComposerNote("executing command...");
+          Promise.resolve(onExecuteCommand(draft))
+            .then((result) => {
               if (!isMountedRef.current) {
                 return;
               }
-              setComposerNote(undefined);
+              if (result.navigateTo) {
+                shellStore?.navigate(result.navigateTo);
+              }
+              setComposerNote(result.note);
             })
             .catch((error: unknown) => {
               if (!isMountedRef.current) {
@@ -214,28 +169,73 @@ export function TUIApp({
           return;
         }
 
-        setComposerNote("task execution bridge pending");
+        setComposerNote("command bridge pending");
         return;
       }
 
-      if (input === "\t") {
-        const completed = completeGotoCommand(composerDraftRef.current);
-        if (completed) {
-          setComposerDraft(completed);
+      if (onSubmitTask) {
+        shellStore?.navigate("chat");
+        setComposerDraft("");
+        setComposerNote("executing task...");
+        Promise.resolve(onSubmitTask(draft))
+          .then(() => {
+            if (!isMountedRef.current) {
+              return;
+            }
+            setComposerNote(undefined);
+          })
+          .catch((error: unknown) => {
+            if (!isMountedRef.current) {
+              return;
+            }
+            if (!composerDraftRef.current) {
+              setComposerDraft(draft);
+            }
+            setComposerNote(error instanceof Error ? error.message : String(error));
+          });
+        return;
+      }
+
+      setComposerNote("task execution bridge pending");
+    };
+
+    const handleData = (data: string | Buffer) => {
+      const result = dispatchShortcut(normalizeKeyInput(data), {
+        draft: composerDraftRef.current,
+        hasComposer: true,
+      });
+
+      switch (result.type) {
+        case "clear-draft":
+          setComposerDraft("");
           setComposerNote(undefined);
+          return;
+
+        case "submit":
+          submitDraft(result.draft);
+          return;
+
+        case "complete": {
+          const completed = completeGotoCommand(result.draft);
+          if (completed) {
+            setComposerDraft(completed);
+            setComposerNote(undefined);
+          }
+          return;
         }
-        return;
-      }
 
-      if (input === "\b" || input === "\u007F") {
-        setComposerDraft((currentDraft) => currentDraft.slice(0, -1));
-        setComposerNote(undefined);
-        return;
-      }
+        case "delete-char":
+          setComposerDraft((currentDraft) => currentDraft.slice(0, -1));
+          setComposerNote(undefined);
+          return;
 
-      if (/^[\x20-\x7E]+$/u.test(input)) {
-        setComposerDraft((currentDraft) => currentDraft + input);
-        setComposerNote(undefined);
+        case "insert-char":
+          setComposerDraft((currentDraft) => currentDraft + result.text);
+          setComposerNote(undefined);
+          return;
+
+        default:
+          return;
       }
     };
 
