@@ -10,7 +10,7 @@ import { ResumeScene } from "./scenes/resume.js";
 import { ReviewScene } from "./scenes/review.js";
 import { SettingsScene } from "./scenes/settings.js";
 import { TasksScene } from "./scenes/tasks.js";
-import { completeGotoCommand, parseGotoCommand } from "./shell/router.js";
+import { completeSlashCommand, parseGotoCommand } from "./shell/router.js";
 import { dispatchShortcut, normalizeKeyInput } from "./shell/shortcuts.js";
 import {
   type ShellState,
@@ -216,7 +216,7 @@ export function TUIApp({
           return;
 
         case "complete": {
-          const completed = completeGotoCommand(result.draft);
+          const completed = completeSlashCommand(result.draft);
           if (completed) {
             setComposerDraft(completed);
             setComposerNote(undefined);
