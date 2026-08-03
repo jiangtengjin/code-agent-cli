@@ -3,7 +3,10 @@ import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { createInteractionEvent } from "../../../src/interaction/events.js";
 import { TUIApp } from "../../../src/tui/app.js";
-import { createInteractionEventAction, createSceneChangedAction } from "../../../src/tui/shell/actions.js";
+import {
+  createInteractionEventAction,
+  createSceneChangedAction,
+} from "../../../src/tui/shell/actions.js";
 import { reduceShellState } from "../../../src/tui/shell/reducer.js";
 import { createInitialShellState } from "../../../src/tui/shell/state.js";
 import { createShellStore } from "../../../src/tui/shell/store.js";
@@ -483,7 +486,7 @@ describe("TUIApp", () => {
               },
             },
             dirty: true,
-            diff: "-    \"model\": \"deepseek-chat\"\n+    \"model\": \"qwen-plus\"",
+            diff: '-    "model": "deepseek-chat"\n+    "model": "qwen-plus"',
             updatedAt: "2026-07-26T16:40:00.000Z",
           },
         },
@@ -529,7 +532,7 @@ describe("TUIApp", () => {
     expect(result.lastFrame()).toContain("dirty: yes");
     expect(result.lastFrame()).toContain("validation: invalid");
     expect(result.lastFrame()).toContain("Unknown model alias");
-    expect(result.lastFrame()).toContain("+    \"model\": \"qwen-plus\"");
+    expect(result.lastFrame()).toContain('+    "model": "qwen-plus"');
     result.unmount();
   });
 

@@ -14,6 +14,7 @@ export const SHELL_SHORTCUT_HINTS = [
   "Enter submit",
   "Tab complete",
   "Esc clear",
+  "Ctrl+. palette",
   "/goto <scene>",
 ] as const;
 
@@ -22,12 +23,16 @@ export type KeyDescriptor =
   | { kind: "enter" }
   | { kind: "tab" }
   | { kind: "backspace" }
+  | { kind: "arrow"; direction: "up" | "down" }
+  | { kind: "control"; key: string }
   | { kind: "text"; text: string }
   | { kind: "unknown" };
 
 export interface ShortcutContext {
   draft: string;
   hasComposer?: boolean;
+  paletteOpen?: boolean;
+  paletteQuery?: string;
 }
 
 export type ShortcutResult =
@@ -36,6 +41,11 @@ export type ShortcutResult =
   | { type: "complete"; draft: string }
   | { type: "delete-char" }
   | { type: "insert-char"; text: string }
+  | { type: "open-palette" }
+  | { type: "palette-move"; direction: "up" | "down" }
+  | { type: "palette-submit" }
+  | { type: "palette-query"; query: string }
+  | { type: "palette-close" }
   | { type: "noop" };
 
 const NOOP: ShortcutResult = { type: "noop" };
@@ -71,6 +81,14 @@ export function isPrintableText(text: string): boolean {
 export function normalizeKeyInput(raw: string | Buffer): KeyDescriptor {
   const input = toStringInput(raw);
 
+  // 方向键以 ESC 开头，需在单键 ESC 判定之前识别完整序列，否则会被当作清除。
+  if (input === "\u001B[A" || input === "\u001BOA") {
+    return { kind: "arrow", direction: "up" };
+  }
+  if (input === "\u001B[B" || input === "\u001BOB") {
+    return { kind: "arrow", direction: "down" };
+  }
+
   if (input === "\u001B") {
     return { kind: "escape" };
   }
@@ -87,6 +105,11 @@ export function normalizeKeyInput(raw: string | Buffer): KeyDescriptor {
     return { kind: "backspace" };
   }
 
+  // Ctrl+. 在多数终端发出 0x1E（Record Separator），作为命令面板触发键。
+  if (input === "\u001E") {
+    return { kind: "control", key: "." };
+  }
+
   if (isPrintableText(input)) {
     return { kind: "text", text: input };
   }
@@ -95,6 +118,11 @@ export function normalizeKeyInput(raw: string | Buffer): KeyDescriptor {
 }
 
 export function dispatchShortcut(key: KeyDescriptor, context: ShortcutContext): ShortcutResult {
+  // 命令面板打开时，按键路由到面板操作而非 composer
+  if (context.paletteOpen) {
+    return dispatchPaletteShortcut(key, context);
+  }
+
   switch (key.kind) {
     case "escape":
       return { type: "clear-draft" };
@@ -116,10 +144,55 @@ export function dispatchShortcut(key: KeyDescriptor, context: ShortcutContext): 
       }
       return { type: "delete-char" };
 
+    case "control":
+      if (key.key === ".") {
+        return { type: "open-palette" };
+      }
+      return NOOP;
+
     case "text":
       return { type: "insert-char", text: key.text };
 
     default:
+      return NOOP;
+  }
+}
+
+/**
+ * 命令面板打开时的按键分发。
+ *
+ * 此时 composer 输入被挂起，按键专门用于面板导航与查询：
+ * - Esc 关闭面板
+ * - Up/Down 在列表中移动选择
+ * - Enter 提交当前选中项
+ * - 可打印文本用于过滤面板查询
+ */
+function dispatchPaletteShortcut(key: KeyDescriptor, context: ShortcutContext): ShortcutResult {
+  switch (key.kind) {
+    case "escape":
+      return { type: "palette-close" };
+
+    case "arrow":
+      return { type: "palette-move", direction: key.direction };
+
+    case "enter":
+      return { type: "palette-submit" };
+
+    case "text":
+      return { type: "palette-query", query: (context.paletteQuery ?? "") + key.text };
+
+    case "backspace": {
+      const currentQuery = context.paletteQuery ?? "";
+      if (currentQuery.length > 0) {
+        // 在查询模式下，backspace 删除查询字符而不是 composer 草稿
+        return { type: "palette-query", query: currentQuery.slice(0, -1) };
+      }
+      // 查询空时 backscope 关闭面板（类似 composer 中清空的行为）
+      return { type: "palette-close" };
+    }
+
+    default:
+      // 其他按键在面板模式下忽略，避免干扰面板操作
       return NOOP;
   }
 }

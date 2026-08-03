@@ -36,6 +36,20 @@ describe("normalizeKeyInput", () => {
     expect(normalizeKeyInput("统一 tui")).toEqual({ kind: "text", text: "统一 tui" });
   });
 
+  it("recognizes arrow up key as up navigation", () => {
+    expect(normalizeKeyInput("\u001B[A")).toEqual({ kind: "arrow", direction: "up" });
+    expect(normalizeKeyInput("\u001BOA")).toEqual({ kind: "arrow", direction: "up" });
+  });
+
+  it("recognizes arrow down key as down navigation", () => {
+    expect(normalizeKeyInput("\u001B[B")).toEqual({ kind: "arrow", direction: "down" });
+    expect(normalizeKeyInput("\u001BOB")).toEqual({ kind: "arrow", direction: "down" });
+  });
+
+  it("recognizes Ctrl+. as the command palette trigger", () => {
+    expect(normalizeKeyInput("\u001E")).toEqual({ kind: "control", key: "." });
+  });
+
   it("treats control characters that are not mapped keys as unknown", () => {
     expect(normalizeKeyInput("\u0000")).toEqual({ kind: "unknown" });
     expect(normalizeKeyInput("\u0001")).toEqual({ kind: "unknown" });
@@ -125,10 +139,98 @@ describe("dispatchShortcut", () => {
     expect(dispatchShortcut(normalizeKeyInput("\u0001"), baseContext)).toEqual({ type: "noop" });
   });
 
+  it("opens the command palette on Ctrl+.", () => {
+    expect(dispatchShortcut(normalizeKeyInput("\u001E"), baseContext)).toEqual({
+      type: "open-palette",
+    });
+  });
+
   it("exposes shortcut hints for the rail", () => {
     expect(SHELL_SHORTCUT_HINTS.length).toBeGreaterThan(0);
     for (const hint of SHELL_SHORTCUT_HINTS) {
       expect(typeof hint).toBe("string");
     }
+  });
+
+  describe("when command palette is open", () => {
+    const paletteContext: ShortcutContext = {
+      draft: "",
+      paletteOpen: true,
+      paletteQuery: "",
+    };
+
+    it("routes Esc to close the palette", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\u001B"), paletteContext)).toEqual({
+        type: "palette-close",
+      });
+    });
+
+    it("routes Up arrow to move selection up", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\u001B[A"), paletteContext)).toEqual({
+        type: "palette-move",
+        direction: "up",
+      });
+    });
+
+    it("routes Down arrow to move selection down", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\u001B[B"), paletteContext)).toEqual({
+        type: "palette-move",
+        direction: "down",
+      });
+    });
+
+    it("routes Enter to submit current palette selection", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\r"), paletteContext)).toEqual({
+        type: "palette-submit",
+      });
+    });
+
+    it("routes text input to update palette query", () => {
+      expect(dispatchShortcut(normalizeKeyInput("cha"), paletteContext)).toEqual({
+        type: "palette-query",
+        query: "cha",
+      });
+    });
+
+    it("appends text input to existing palette query", () => {
+      expect(
+        dispatchShortcut(normalizeKeyInput("t"), { ...paletteContext, paletteQuery: "cha" }),
+      ).toEqual({
+        type: "palette-query",
+        query: "chat",
+      });
+    });
+
+    it("routes backspace to delete last query character", () => {
+      expect(
+        dispatchShortcut(normalizeKeyInput("\b"), { ...paletteContext, paletteQuery: "chat" }),
+      ).toEqual({
+        type: "palette-query",
+        query: "cha",
+      });
+    });
+
+    it("routes backspace to close palette when query is empty", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\b"), paletteContext)).toEqual({
+        type: "palette-close",
+      });
+    });
+
+    it("ignores other control keys when palette is open", () => {
+      // Tab should not trigger completion in palette mode
+      expect(dispatchShortcut(normalizeKeyInput("\t"), paletteContext)).toEqual({
+        type: "noop",
+      });
+      // Ctrl+. should not re-open palette
+      expect(dispatchShortcut(normalizeKeyInput("\u001E"), paletteContext)).toEqual({
+        type: "noop",
+      });
+    });
+
+    it("ignores unknown input when palette is open", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\u0001"), paletteContext)).toEqual({
+        type: "noop",
+      });
+    });
   });
 });
