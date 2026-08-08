@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { CostTracker } from "../llm/cost-tracker.js";
+import type { ChatMode } from "../types/mode.js";
+import type { PlanState } from "../types/plan.js";
+import type { LLMMessage } from "../types/provider.js";
+import type { SessionKind, SessionState, SessionStatus } from "../types/session.js";
 import { createSessionState, deriveSessionTitle, forkSessionState } from "./runtime.js";
 import { SessionStore } from "./store.js";
 import type { UsageTracker } from "./usage.js";
 import { resolveWorkspace } from "./workspace.js";
-import type { SessionKind, SessionState, SessionStatus } from "../types/session.js";
-import type { ChatMode } from "../types/mode.js";
-import type { PlanState } from "../types/plan.js";
-import type { LLMMessage } from "../types/provider.js";
 
 type SessionPersistenceOptions = {
   enabled: boolean;
@@ -43,7 +43,8 @@ export class SessionPersistence {
 
   constructor(private readonly options: SessionPersistenceOptions) {
     this.enabled = options.enabled && Boolean(options.storePath);
-    this.store = this.enabled && options.storePath ? new SessionStore(options.storePath) : undefined;
+    this.store =
+      this.enabled && options.storePath ? new SessionStore(options.storePath) : undefined;
     this.cwd = options.cwd ?? process.cwd();
   }
 

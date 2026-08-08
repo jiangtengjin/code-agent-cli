@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { DEFAULT_SESSION_TITLE, createSessionState, createSessionSummary } from "./runtime.js";
 import type { SessionEvent, SessionState, SessionSummary } from "../types/session.js";
+import { DEFAULT_SESSION_TITLE, createSessionState, createSessionSummary } from "./runtime.js";
 
 type SessionMeta = {
   id: string;
@@ -254,7 +254,8 @@ export class SessionStore {
     }
 
     if (!summary?.title || summary.title === DEFAULT_SESSION_TITLE) {
-      state.title = state.messages.length > 0 ? createSessionSummary(state).title : DEFAULT_SESSION_TITLE;
+      state.title =
+        state.messages.length > 0 ? createSessionSummary(state).title : DEFAULT_SESSION_TITLE;
     }
 
     return state;

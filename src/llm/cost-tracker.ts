@@ -127,10 +127,7 @@ export class CostTracker {
       return false;
     }
 
-    return (
-      this.totals.totalCost >=
-      this.options.monthlyBudget * (this.options.warnAtPercent / 100)
-    );
+    return this.totals.totalCost >= this.options.monthlyBudget * (this.options.warnAtPercent / 100);
   }
 }
 

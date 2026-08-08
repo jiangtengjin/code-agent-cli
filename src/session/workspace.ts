@@ -21,7 +21,10 @@ async function hasGitMarker(dirPath: string): Promise<boolean> {
 }
 
 function createWorkspaceKey(workspacePath: string): string {
-  return createHash("sha1").update(normalizeWorkspacePath(workspacePath)).digest("hex").slice(0, 16);
+  return createHash("sha1")
+    .update(normalizeWorkspacePath(workspacePath))
+    .digest("hex")
+    .slice(0, 16);
 }
 
 export async function resolveWorkspace(cwd: string): Promise<WorkspaceInfo> {

@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { ConfigResolver } from "../../src/config/resolver.js";
-import { LLMConfigSchema, ConfigSchema } from "../../src/config/schema.js";
+import { ConfigSchema, LLMConfigSchema } from "../../src/config/schema.js";
 import { isSensitivePath } from "../../src/utils/path.js";
 
 describe("ConfigSchema 验证", () => {

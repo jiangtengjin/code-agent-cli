@@ -1,6 +1,6 @@
-import type { InteractionEventBridge } from "./bridge.js";
 import type { LLMMessage, LLMToolCall } from "../types/provider.js";
 import type { ToolCall } from "../types/tool.js";
+import type { InteractionEventBridge } from "./bridge.js";
 
 function createApprovalSummary(toolCall: LLMToolCall): string {
   try {
