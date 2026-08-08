@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import type { TUIChatController } from "../../../src/tui/adapters/chat-controller.js";
 import { startInteractiveShell } from "../../../src/tui/bootstrap.js";
 import type { ShellStore } from "../../../src/tui/shell/store.js";
-import type { TUIChatController } from "../../../src/tui/adapters/chat-controller.js";
 import type { Config } from "../../../src/types/config.js";
 
 const config: Config = {

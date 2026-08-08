@@ -2,27 +2,27 @@
  * 命令面板的纯状态逻辑。
  *
  * 这里只维护「打开/查询/选中」这一组可测试的状态机，不接触 React 与键盘。
- * 组件层（`useCommandPalette` hook 与 `CommandPalette` 组件）复用这些纯函数。
+ * 组件层（`CommandPalette` 组件）复用这些纯函数。
  */
 
-import type { ShellSlashCommand } from "../shell/router.js";
-import type { TUIScene } from "../types.js";
-
-export type PaletteItemKind = "scene" | "command";
+import { SHELL_SLASH_COMMANDS, type ShellSlashCommand } from "../shell/router.js";
 
 export interface PaletteItem {
   id: string;
   label: string;
-  kind: PaletteItemKind;
   value: string;
   description?: string;
+  argHint?: string;
 }
 
 export interface PaletteState {
   open: boolean;
   query: string;
   selectedIndex: number;
+  /** 当前查询下的可见候选项。 */
   items: PaletteItem[];
+  /** 全量候选项，作为每次查询的过滤源，避免逐字缩小后无法回退。 */
+  source: PaletteItem[];
 }
 
 export interface PaletteSelection {
@@ -35,15 +35,25 @@ export function createPaletteState(): PaletteState {
     query: "",
     selectedIndex: 0,
     items: [],
+    source: [],
   };
 }
 
-export function openPalette(state: PaletteState): PaletteState {
+/**
+ * 打开面板。
+ *
+ * 传入的 `items` 同时成为可见项与过滤源；省略时取全量命令目录。
+ */
+export function openPalette(state: PaletteState, items?: PaletteItem[]): PaletteState {
+  const source = items ?? (state.source.length > 0 ? state.source : buildPaletteItems());
+
   return {
     ...state,
     open: true,
     query: "",
     selectedIndex: 0,
+    items: [...source],
+    source,
   };
 }
 
@@ -53,6 +63,7 @@ export function closePalette(state: PaletteState): PaletteState {
     open: false,
     query: "",
     selectedIndex: 0,
+    items: [],
   };
 }
 
@@ -61,11 +72,18 @@ export function filterPaletteItems(items: PaletteItem[], query: string): Palette
   if (!normalized) {
     return [...items];
   }
-  return items.filter((item) => item.label.toLowerCase().includes(normalized));
+
+  // 同时匹配标签与描述，这样输入「审批」也能命中 /approvals。
+  return items.filter(
+    (item) =>
+      item.label.toLowerCase().includes(normalized) ||
+      (item.description ?? "").toLowerCase().includes(normalized),
+  );
 }
 
 export function setPaletteQuery(state: PaletteState, query: string): PaletteState {
-  const items = filterPaletteItems(state.items, query);
+  const source = state.source.length > 0 ? state.source : state.items;
+  const items = filterPaletteItems(source, query);
   return {
     ...state,
     query,
@@ -96,31 +114,24 @@ export function selectPaletteItem(state: PaletteState): PaletteSelection | undef
   return item ? { item } : undefined;
 }
 
-/**
- * 由场景列表与 slash 命令目录构建面板候选项。
- *
- * 场景在前、命令在后，二者来源都是 Shell 层的稳定数据，避免在 hook 内重复构造。
- */
-export function buildPaletteItems(
-  scenes: readonly TUIScene[],
-  labels: Record<TUIScene, string>,
-  commands: readonly ShellSlashCommand[],
-): PaletteItem[] {
-  const sceneItems: PaletteItem[] = scenes.map((scene) => ({
-    id: `scene:${scene}`,
-    label: labels[scene],
-    kind: "scene",
-    value: scene,
-    description: "navigate",
-  }));
-
-  const commandItems: PaletteItem[] = commands.map((command) => ({
+function toPaletteItem(command: ShellSlashCommand): PaletteItem {
+  return {
     id: `command:${command.name}`,
     label: `/${command.name}`,
-    kind: "command",
     value: `/${command.name}`,
     description: command.description,
-  }));
+    argHint: command.argHint,
+  };
+}
 
-  return [...sceneItems, ...commandItems];
+/**
+ * 由 slash 命令目录构建面板候选项。
+ *
+ * 场景不再单独列项——每个场景都有对应的 slash 命令（`/tasks`、`/approvals` …），
+ * 单一列表避免了「同一个目的地出现两次」的困惑。
+ */
+export function buildPaletteItems(
+  commands: readonly ShellSlashCommand[] = SHELL_SLASH_COMMANDS,
+): PaletteItem[] {
+  return commands.map((command) => toPaletteItem(command));
 }

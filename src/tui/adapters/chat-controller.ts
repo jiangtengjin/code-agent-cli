@@ -33,6 +33,7 @@ import type { PlanState } from "../../types/plan.js";
 import type { LLMMessage, LLMToolCall } from "../../types/provider.js";
 import type { SessionState, SessionStatus, SessionSummary } from "../../types/session.js";
 import type { ToolResult } from "../../types/tool.js";
+import { findShellCommand, resolveSceneQuery } from "../shell/router.js";
 import type { TUIScene } from "../types.js";
 
 export interface TUIChatControllerInitializeOptions {
@@ -305,6 +306,7 @@ class DefaultTUIChatController implements TUIChatController {
   private initialized?: Promise<void>;
   private runtimeSession?: SessionState;
   private lastSessionDigest?: string;
+  private lastRuntimeDigest?: string;
   private activeSubmission?: Promise<TUIChatSubmitResult>;
   private messages: LLMMessage[] = [];
   private pendingPlan?: PlanState;
@@ -405,7 +407,13 @@ class DefaultTUIChatController implements TUIChatController {
     const command = tokens[0]?.toLowerCase();
     const args = tokens.slice(1);
 
-    switch (command) {
+    // 别名归一（/config -> settings、/task -> tasks 等）由路由目录统一维护，
+    // 这里只处理归一后的规范名，避免两处各记一份别名表。
+    const canonical = command ? (findShellCommand(command)?.name ?? command) : command;
+
+    switch (canonical) {
+      case "goto":
+        return this.runGotoCommand(args);
       case "approve":
         return this.resolvePendingApproval(args[0], true);
       case "reject":
@@ -426,10 +434,16 @@ class DefaultTUIChatController implements TUIChatController {
         };
       case "review":
         return this.runReviewCommand();
-      case "config":
+      case "settings":
         return this.runConfigCommand(args);
       case "mode":
         return this.runModeCommand(args);
+      case "tasks":
+        return { handled: true, navigateTo: "tasks" };
+      case "approvals":
+        return { handled: true, navigateTo: "approvals" };
+      case "mcp":
+        return { handled: true, navigateTo: "mcp" };
       default:
         return {
           handled: false,
@@ -655,6 +669,15 @@ class DefaultTUIChatController implements TUIChatController {
       return {
         handled: true,
         navigateTo: "settings",
+        note: "config draft loaded",
+      };
+    }
+
+    if (action === "mcp") {
+      return {
+        handled: true,
+        navigateTo: "mcp",
+        note: "navigated to mcp settings",
       };
     }
 
@@ -732,6 +755,39 @@ class DefaultTUIChatController implements TUIChatController {
       handled: true,
       navigateTo: "chat",
       note: `mode: ${this.mode}`,
+    };
+  }
+
+  private async runGotoCommand(args: string[]): Promise<TUICommandResult> {
+    const targetScene = args[0]?.toLowerCase();
+    if (!targetScene) {
+      throw new Error("Scene name is required.");
+    }
+
+    // 场景解析与别名统一由路由目录负责：先按场景名/前缀解析，
+    // 再回退到命令别名（`/goto config` -> settings）。
+    const scene = resolveSceneQuery(targetScene) ?? findShellCommand(targetScene)?.scene;
+    if (!scene) {
+      return {
+        handled: false,
+        note: `unknown scene: ${targetScene}`,
+      };
+    }
+
+    // 特殊处理 resume 场景，需要刷新目录
+    if (scene === "resume") {
+      await this.refreshResumeCatalog();
+      return {
+        handled: true,
+        navigateTo: "resume",
+        note: `navigated to ${scene}`,
+      };
+    }
+
+    return {
+      handled: true,
+      navigateTo: scene,
+      note: `navigated to ${scene}`,
     };
   }
 
@@ -982,7 +1038,29 @@ class DefaultTUIChatController implements TUIChatController {
     return this.sessionStore;
   }
 
+  /**
+   * 推送模型、token 与费用快照。
+   *
+   * `/status` 面板和状态栏都读这份数据，所以在每次会话摘要变化时一并更新，
+   * 保证「用了多少」不会落后于对话本身。
+   */
+  private emitRuntimeUsage(): void {
+    const runtime = {
+      modelName: this.config.model?.model ?? "n/a",
+      usage: this.usageTracker.snapshot(),
+      cost: this.costTracker.snapshot(),
+    };
+    const digest = JSON.stringify(runtime);
+    if (digest === this.lastRuntimeDigest) {
+      return;
+    }
+
+    this.lastRuntimeDigest = digest;
+    this.interaction.runtimeUsageUpdated(runtime);
+  }
+
   private emitSessionSummary(): void {
+    this.emitRuntimeUsage();
     const session = this.syncRuntimeSession();
     if (!session) {
       return;

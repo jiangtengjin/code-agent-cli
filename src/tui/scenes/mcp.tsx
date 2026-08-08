@@ -5,10 +5,7 @@ export interface MCPSceneProps {
   servers: MCPHealthSnapshot[];
 }
 
-function countServers(
-  servers: MCPHealthSnapshot[],
-  status: MCPHealthSnapshot["status"],
-): number {
+function countServers(servers: MCPHealthSnapshot[], status: MCPHealthSnapshot["status"]): number {
   return servers.filter((server) => server.status === status).length;
 }
 
@@ -34,7 +31,11 @@ export function MCPScene({ servers }: MCPSceneProps) {
       <Text dimColor>
         Servers: {servers.length} | Healthy: {healthyCount} | Degraded: {degradedCount}
       </Text>
-      {servers.length === 0 ? <Text dimColor>No MCP servers discovered</Text> : servers.map((server) => renderServer(server))}
+      {servers.length === 0 ? (
+        <Text dimColor>No MCP servers discovered</Text>
+      ) : (
+        servers.map((server) => renderServer(server))
+      )}
     </Box>
   );
 }

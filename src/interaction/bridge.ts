@@ -7,10 +7,11 @@ import type {
   ApprovalResolution,
   ConfigSnapshot,
   ConfigValidationSnapshot,
-  ResumeCatalogSnapshot,
   InteractionTaskSnapshot,
   MCPHealthSnapshot,
+  ResumeCatalogSnapshot,
   ReviewFinding,
+  RuntimeUsageSnapshot,
 } from "./events.js";
 import { createInteractionEvent } from "./events.js";
 
@@ -183,6 +184,18 @@ export class InteractionEventBridge {
         "mcp.health.updated",
         {
           servers,
+        },
+        this.now(),
+      ),
+    );
+  }
+
+  runtimeUsageUpdated(runtime: RuntimeUsageSnapshot) {
+    return this.sink.emit(
+      createInteractionEvent(
+        "runtime.usage.updated",
+        {
+          runtime,
         },
         this.now(),
       ),

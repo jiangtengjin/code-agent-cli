@@ -1,6 +1,6 @@
 import { Box, Text } from "ink";
-import type { ShellConfigSnapshotState } from "../shell/state.js";
 import type { ConfigValidationSnapshot } from "../../interaction/events.js";
+import type { ShellConfigSnapshotState } from "../shell/state.js";
 
 export interface SettingsSceneProps {
   snapshot?: ShellConfigSnapshotState;

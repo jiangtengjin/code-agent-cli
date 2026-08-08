@@ -2,19 +2,20 @@ import type {
   ApprovalRequest,
   ApprovalResolution,
   ConfigSnapshot,
-  ConfigValidationStatus,
   ConfigValidationSnapshot,
+  ConfigValidationStatus,
   InteractionTaskSnapshot,
   InteractionTaskStatus,
   MCPHealthSnapshot,
   ResumeCatalogSnapshot,
   ReviewFinding,
+  RuntimeUsageSnapshot,
 } from "../../interaction/events.js";
 import type { LLMMessage } from "../../types/provider.js";
 import type { SessionStatus, SessionSummary } from "../../types/session.js";
 import type { ToolCall, ToolResult } from "../../types/tool.js";
 import type { TUIScene } from "../types.js";
-import { SCENE_LABELS, SHELL_SCENES } from "./router.js";
+import { ROOT_SCENE } from "./router.js";
 
 export interface ShellMessageEntry {
   id: string;
@@ -87,20 +88,41 @@ export interface ShellState {
   configSnapshot?: ShellConfigSnapshotState;
   configValidation: ConfigValidationSnapshot;
   mcpServers: MCPHealthSnapshot[];
+  runtime?: RuntimeUsageSnapshot;
   lastEventAt?: string;
 }
 
-export interface HomeSummary {
-  activeScene: TUIScene;
+/**
+ * `/status` 面板数据。
+ *
+ * 取代了原先的 home 场景：同样的总览信息，但作为对话之上的一次性面板呈现，
+ * 用户不必离开对话就能看完，Esc 即回。
+ */
+export interface StatusSummary {
   sessionTitle: string;
+  sessionId?: string;
   sessionStatus?: SessionStatus;
+  mode?: SessionSummary["mode"];
+  workspacePath: string;
+  modelName: string;
   messageCount: number;
+  turnCount: number;
   runningToolCount: number;
   pendingApprovalCount: number;
   resolvedApprovalCount: number;
   reviewFindingCount: number;
   lastResumeSessionId?: string;
   taskCounts: Record<InteractionTaskStatus, number>;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  llmCalls: number;
+  currency: string;
+  totalCost?: number;
+  healthyMcpServerCount: number;
+  totalMcpServerCount: number;
+  configStatus: ConfigValidationStatus;
+  configIssueCount: number;
 }
 
 export interface StatusBarSummary {
@@ -108,32 +130,13 @@ export interface StatusBarSummary {
   mode?: SessionSummary["mode"];
   sessionStatus?: SessionStatus;
   workspacePath: string;
+  modelName: string;
   pendingApprovalCount: number;
   activeTaskCount: number;
+  totalTokens: number;
+  currency: string;
+  totalCost?: number;
   lastEventAt?: string;
-}
-
-export interface RailItemSummary {
-  scene: TUIScene;
-  label: string;
-  isActive: boolean;
-  badge?: string;
-}
-
-export interface InspectorSummary {
-  sessionTitle: string;
-  sessionId?: string;
-  latestUserPreview?: string;
-  latestAssistantPreview?: string;
-  latestToolName?: string;
-  latestToolStatus?: ShellToolStatus;
-  lastResumeSessionId?: string;
-  reviewFindingCount: number;
-  configDirty: boolean;
-  configStatus: ConfigValidationStatus;
-  configIssueCount: number;
-  healthyMcpServerCount: number;
-  totalMcpServerCount: number;
 }
 
 export interface TaskBoardSummary {
@@ -160,7 +163,7 @@ const DEFAULT_CONFIG_VALIDATION: ConfigValidationSnapshot = {
 
 export function createInitialShellState(overrides: Partial<ShellState> = {}): ShellState {
   const baseState: ShellState = {
-    activeScene: "home",
+    activeScene: ROOT_SCENE,
     chat: {
       messages: [],
       tools: [],
@@ -192,24 +195,19 @@ export function createInitialShellState(overrides: Partial<ShellState> = {}): Sh
   };
 }
 
-export function selectHomeSummary(state: ShellState): HomeSummary {
-  const taskCounts: Record<InteractionTaskStatus, number> = {
-    pending: 0,
-    running: 0,
-    awaiting_approval: 0,
-    completed: 0,
-    failed: 0,
-  };
-
-  for (const task of state.tasks) {
-    taskCounts[task.status] += 1;
-  }
+export function selectStatusSummary(state: ShellState): StatusSummary {
+  const taskCounts = countTasksByStatus(state.tasks);
+  const usage = state.runtime?.usage;
 
   return {
-    activeScene: state.activeScene,
-    sessionTitle: state.currentSession?.title ?? "No active session",
+    sessionTitle: state.currentSession?.title || "New session",
+    sessionId: state.currentSession?.id,
     sessionStatus: state.currentSession?.status,
+    mode: state.currentSession?.mode,
+    workspacePath: state.currentSession?.workspacePath ?? "",
+    modelName: state.runtime?.modelName ?? "n/a",
     messageCount: state.chat.messages.length,
+    turnCount: state.currentSession?.turnCount ?? 0,
     runningToolCount: state.chat.tools.filter((tool) => tool.status === "running").length,
     pendingApprovalCount: state.approvals.items.filter((approval) => approval.status === "pending")
       .length,
@@ -218,6 +216,16 @@ export function selectHomeSummary(state: ShellState): HomeSummary {
     reviewFindingCount: state.reviewFindings.length,
     lastResumeSessionId: state.resume?.sessionId,
     taskCounts,
+    promptTokens: usage?.promptTokens ?? 0,
+    completionTokens: usage?.completionTokens ?? 0,
+    totalTokens: usage?.totalTokens ?? 0,
+    llmCalls: usage?.calls ?? 0,
+    currency: state.runtime?.cost?.currency ?? "¥",
+    totalCost: state.runtime?.cost?.totalCost,
+    healthyMcpServerCount: state.mcpServers.filter((server) => server.status === "healthy").length,
+    totalMcpServerCount: state.mcpServers.length,
+    configStatus: state.configValidation.status,
+    configIssueCount: state.configValidation.issues.length,
   };
 }
 
@@ -227,70 +235,14 @@ export function selectStatusBarSummary(state: ShellState): StatusBarSummary {
     mode: state.currentSession?.mode,
     sessionStatus: state.currentSession?.status,
     workspacePath: state.currentSession?.workspacePath ?? "",
+    modelName: state.runtime?.modelName ?? "n/a",
     pendingApprovalCount: state.approvals.items.filter((approval) => approval.status === "pending")
       .length,
     activeTaskCount: state.tasks.filter((task) => isActiveTask(task)).length,
+    totalTokens: state.runtime?.usage.totalTokens ?? 0,
+    currency: state.runtime?.cost?.currency ?? "¥",
+    totalCost: state.runtime?.cost?.totalCost,
     lastEventAt: state.lastEventAt,
-  };
-}
-
-export function selectRailItems(state: ShellState): RailItemSummary[] {
-  const pendingApprovals = state.approvals.items.filter((approval) => approval.status === "pending")
-    .length;
-  const reviewFindings = state.reviewFindings.length;
-  const configIssues = state.configValidation.issues.length;
-  const taskCount = state.tasks.filter((task) => isActiveTask(task)).length;
-  const mcpServerCount = state.mcpServers.length;
-  const resumeBadge =
-    state.resumeCatalog && state.resumeCatalog.items.length > 0
-      ? String(state.resumeCatalog.items.length)
-      : state.resume
-        ? "1"
-        : undefined;
-
-  return SHELL_SCENES.map((scene) => {
-    let badge: string | undefined;
-    if (scene === "approvals" && pendingApprovals > 0) {
-      badge = String(pendingApprovals);
-    } else if (scene === "review" && reviewFindings > 0) {
-      badge = String(reviewFindings);
-    } else if (scene === "settings" && configIssues > 0) {
-      badge = String(configIssues);
-    } else if (scene === "tasks" && taskCount > 0) {
-      badge = String(taskCount);
-    } else if (scene === "mcp" && mcpServerCount > 0) {
-      badge = String(mcpServerCount);
-    } else if (scene === "resume" && resumeBadge) {
-      badge = resumeBadge;
-    }
-
-    return {
-      scene,
-      label: SCENE_LABELS[scene],
-      isActive: state.activeScene === scene,
-      badge,
-    };
-  });
-}
-
-export function selectInspectorSummary(state: ShellState): InspectorSummary {
-  const latestTool = state.chat.tools[state.chat.tools.length - 1];
-  const healthyMcpServerCount = state.mcpServers.filter((server) => server.status === "healthy").length;
-
-  return {
-    sessionTitle: state.currentSession?.title ?? "No active session",
-    sessionId: state.currentSession?.id,
-    latestUserPreview: state.currentSession?.latestUserPreview,
-    latestAssistantPreview: state.currentSession?.latestAssistantPreview,
-    latestToolName: latestTool?.name,
-    latestToolStatus: latestTool?.status,
-    lastResumeSessionId: state.resume?.sessionId,
-    reviewFindingCount: state.reviewFindings.length,
-    configDirty: state.configSnapshot?.dirty ?? false,
-    configStatus: state.configValidation.status,
-    configIssueCount: state.configValidation.issues.length,
-    healthyMcpServerCount,
-    totalMcpServerCount: state.mcpServers.length,
   };
 }
 
@@ -315,10 +267,10 @@ function countTasksByStatus(tasks: ShellTaskEntry[]): Record<InteractionTaskStat
 }
 
 export function selectTaskBoardSummary(state: ShellState): TaskBoardSummary {
-  const active = state.tasks
-    .filter((task) => isActiveTask(task))
+  const active = state.tasks.filter((task) => isActiveTask(task)).sort(compareTasksByRecency);
+  const queued = state.tasks
+    .filter((task) => task.status === "pending")
     .sort(compareTasksByRecency);
-  const queued = state.tasks.filter((task) => task.status === "pending").sort(compareTasksByRecency);
   const finished = state.tasks
     .filter((task) => task.status === "completed" || task.status === "failed")
     .sort(compareTasksByRecency);

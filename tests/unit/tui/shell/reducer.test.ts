@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { createInteractionEvent } from "../../../../src/interaction/events.js";
+import type { InteractionEvent } from "../../../../src/interaction/events.js";
 import {
   createInteractionEventAction,
   createSceneChangedAction,
 } from "../../../../src/tui/shell/actions.js";
 import { reduceShellState } from "../../../../src/tui/shell/reducer.js";
-import { createInitialShellState, selectHomeSummary } from "../../../../src/tui/shell/state.js";
+import { createInitialShellState, selectStatusSummary } from "../../../../src/tui/shell/state.js";
 import type { ShellState } from "../../../../src/tui/shell/state.js";
-import type { InteractionEvent } from "../../../../src/interaction/events.js";
 
 function reduceEvents(events: InteractionEvent[], state?: ShellState): ShellState {
   return events.reduce(
@@ -180,7 +180,7 @@ describe("reduceShellState", () => {
                 },
               },
               dirty: true,
-              diff: "+    \"model\": \"deepseek-chat\"",
+              diff: '+    "model": "deepseek-chat"',
               updatedAt: "2026-07-26T09:02:25.000Z",
             },
           },
@@ -420,8 +420,8 @@ describe("reduceShellState", () => {
   });
 });
 
-describe("selectHomeSummary", () => {
-  it("derives the home overview from the shell state", () => {
+describe("selectStatusSummary", () => {
+  it("derives the /status overview from the shell state", () => {
     const state = reduceEvents([
       createInteractionEvent(
         "session.changed",
@@ -553,7 +553,7 @@ describe("selectHomeSummary", () => {
             {
               id: "finding-2",
               severity: "medium",
-              title: "Home summary does not count approvals",
+              title: "Status summary does not count approvals",
               summary: "Pending approval count is missing",
             },
           ],
@@ -571,10 +571,10 @@ describe("selectHomeSummary", () => {
       ),
     ]);
 
-    const summary = selectHomeSummary(state);
+    const summary = selectStatusSummary(state);
 
     expect(summary).toMatchObject({
-      activeScene: "home",
+      sessionId: "session-2",
       sessionTitle: "Build the TUI shell",
       sessionStatus: "running",
       messageCount: 2,

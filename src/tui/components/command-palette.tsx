@@ -6,12 +6,17 @@ export interface CommandPaletteProps {
 }
 
 function renderEntry(item: PaletteItem, isSelected: boolean) {
-  const marker = isSelected ? ">" : " ";
-  const kind = item.kind === "scene" ? "scene" : "cmd";
   return (
-    <Text key={item.id} dimColor={!isSelected}>
-      {marker} {item.label} ({kind}){item.description ? ` ${item.description}` : ""}
-    </Text>
+    <Box key={item.id}>
+      <Text color={isSelected ? "cyan" : undefined} dimColor={!isSelected}>
+        {isSelected ? "❯ " : "  "}
+        {item.label.padEnd(12)}
+      </Text>
+      <Text dimColor>
+        {item.argHint ? `${item.argHint} ` : ""}
+        {item.description ?? ""}
+      </Text>
+    </Box>
   );
 }
 
@@ -19,16 +24,21 @@ export function CommandPalette({ state }: CommandPaletteProps) {
   const items = state.items;
 
   return (
-    <Box marginTop={1} flexDirection="column">
-      <Text>Command Palette</Text>
-      <Text dimColor>
-        query: {state.query || "(type to filter)"} | up/down to move | enter to run | esc to close
-      </Text>
-      {items.length === 0 ? (
-        <Text dimColor>No matches</Text>
-      ) : (
-        items.map((item, index) => renderEntry(item, index === state.selectedIndex))
-      )}
+    <Box marginTop={1} flexDirection="column" borderStyle="round" borderDimColor paddingX={1}>
+      <Box>
+        <Text color="cyan">{"❯ "}</Text>
+        {state.query ? <Text>{state.query}</Text> : <Text dimColor>输入以筛选命令</Text>}
+      </Box>
+      <Box marginTop={1} flexDirection="column">
+        {items.length === 0 ? (
+          <Text dimColor>无匹配命令</Text>
+        ) : (
+          items.map((item, index) => renderEntry(item, index === state.selectedIndex))
+        )}
+      </Box>
+      <Box marginTop={1}>
+        <Text dimColor>↑ ↓ 移动 · Enter 填入 · Esc 关闭</Text>
+      </Box>
     </Box>
   );
 }

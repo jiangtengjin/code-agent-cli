@@ -5,56 +5,72 @@ import { CommandPalette } from "../../../../src/tui/components/command-palette.j
 import {
   buildPaletteItems,
   createPaletteState,
-  filterPaletteItems,
   openPalette,
   setPaletteQuery,
 } from "../../../../src/tui/hooks/use-command-palette.js";
-import {
-  SCENE_LABELS,
-  SHELL_SCENES,
-  SHELL_SLASH_COMMANDS,
-} from "../../../../src/tui/shell/router.js";
 
 function buildState(query: string) {
-  const items = buildPaletteItems(SHELL_SCENES, SCENE_LABELS, SHELL_SLASH_COMMANDS);
-  const filtered = filterPaletteItems(items, query);
-  let state = openPalette(createPaletteState());
-  state = { ...state, items };
+  const state = openPalette(createPaletteState(), buildPaletteItems());
   return setPaletteQuery(state, query);
 }
 
 describe("CommandPalette", () => {
-  it("renders all scenes and commands for an empty query", () => {
+  it("renders the whole command catalog for an empty query", () => {
     const state = buildState("");
     const result = render(React.createElement(CommandPalette, { state }));
 
     const frame = result.lastFrame() ?? "";
-    expect(frame).toContain("Command Palette");
-    expect(frame).toContain("> Home (scene)");
-    expect(frame).toContain("/mode (cmd)");
-    expect(frame).toContain("/goto (cmd)");
+    expect(frame).toContain("/help");
+    expect(frame).toContain("/mode");
+    expect(frame).toContain("/goto");
     result.unmount();
   });
 
-  it("highlights only the first item as selected", () => {
+  it("shows the hint line and arg hints", () => {
+    const state = buildState("mode");
+    const result = render(React.createElement(CommandPalette, { state }));
+
+    const frame = result.lastFrame() ?? "";
+    expect(frame).toContain("<normal|auto|plan|edit>");
+    expect(frame).toContain("Enter");
+    expect(frame).toContain("Esc");
+    result.unmount();
+  });
+
+  it("marks only the first item as selected", () => {
     const state = buildState("");
     const result = render(React.createElement(CommandPalette, { state }));
 
     const frame = result.lastFrame() ?? "";
-    // first entry is the Home scene and carries the selection marker
-    expect(frame).toContain("> Home (scene)");
-    // subsequent entries are not selected
-    expect(frame).toContain("  /mode (cmd)");
+    const selectedLines = frame.split("\n").filter((line) => line.includes("❯"));
+    // 一行是查询提示符，一行是选中项，不该出现第三个光标。
+    expect(selectedLines).toHaveLength(2);
     result.unmount();
   });
 
   it("renders filtered matches for a query", () => {
-    const state = buildState("cha");
+    const state = buildState("mcp");
     const result = render(React.createElement(CommandPalette, { state }));
 
     const frame = result.lastFrame() ?? "";
-    expect(frame).toContain("> Chat (scene)");
-    expect(frame).not.toContain("Tasks");
+    expect(frame).toContain("/mcp");
+    expect(frame).not.toContain("/goto");
+    result.unmount();
+  });
+
+  it("echoes the active query", () => {
+    const state = buildState("mcp");
+    const result = render(React.createElement(CommandPalette, { state }));
+
+    expect(result.lastFrame() ?? "").toContain("mcp");
+    result.unmount();
+  });
+
+  it("shows a placeholder prompt when the query is empty", () => {
+    const state = buildState("");
+    const result = render(React.createElement(CommandPalette, { state }));
+
+    expect(result.lastFrame() ?? "").toContain("输入以筛选命令");
     result.unmount();
   });
 
@@ -62,7 +78,7 @@ describe("CommandPalette", () => {
     const state = buildState("zzzz");
     const result = render(React.createElement(CommandPalette, { state }));
 
-    expect(result.lastFrame() ?? "").toContain("No matches");
+    expect(result.lastFrame() ?? "").toContain("无匹配命令");
     result.unmount();
   });
 });

@@ -30,7 +30,11 @@ export function ResumeScene({ catalog, resume }: ResumeSceneProps) {
       <Text>Resume</Text>
       <Text dimColor>Catalog: {items.length} sessions</Text>
       <Text dimColor>Last resumed: {resume?.sessionId ?? "none"}</Text>
-      {items.length === 0 ? <Text dimColor>No saved sessions</Text> : items.map((item) => renderCatalogItem(item))}
+      {items.length === 0 ? (
+        <Text dimColor>No saved sessions</Text>
+      ) : (
+        items.map((item) => renderCatalogItem(item))
+      )}
     </Box>
   );
 }

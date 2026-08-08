@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { createInteractionEvent } from "../../../../src/interaction/events.js";
-import { createInteractionEventAction, createSceneChangedAction } from "../../../../src/tui/shell/actions.js";
+import {
+  createInteractionEventAction,
+  createSceneChangedAction,
+} from "../../../../src/tui/shell/actions.js";
 import { reduceShellState } from "../../../../src/tui/shell/reducer.js";
 import {
   createInitialShellState,
-  selectTaskBoardSummary,
-  selectInspectorSummary,
-  selectRailItems,
   selectStatusBarSummary,
+  selectStatusSummary,
+  selectTaskBoardSummary,
 } from "../../../../src/tui/shell/state.js";
 
 describe("shell state selectors", () => {
@@ -159,7 +161,7 @@ describe("shell state selectors", () => {
               },
             },
             dirty: true,
-            diff: "+    \"model\": \"deepseek-chat\"",
+            diff: '+    "model": "deepseek-chat"',
             updatedAt: "2026-07-26T14:13:30.000Z",
           },
         },
@@ -230,39 +232,70 @@ describe("shell state selectors", () => {
       createInitialShellState(),
     );
 
-    const railItems = selectRailItems(state);
-    const inspector = selectInspectorSummary(state);
-
-    expect(railItems.find((item) => item.scene === "home")).toMatchObject({
-      isActive: true,
-      label: "Home",
-    });
-    expect(railItems.find((item) => item.scene === "approvals")).toMatchObject({
-      badge: "1",
-    });
-    expect(railItems.find((item) => item.scene === "review")).toMatchObject({
-      badge: "1",
-    });
-    expect(railItems.find((item) => item.scene === "resume")).toMatchObject({
-      badge: "1",
-    });
-    expect(railItems.find((item) => item.scene === "tasks")).toMatchObject({
-      badge: undefined,
-    });
-    expect(inspector).toMatchObject({
+    expect(selectStatusSummary(state)).toMatchObject({
       sessionTitle: "Shell inspector context",
       sessionId: "session-4",
-      latestUserPreview: "Continue the shell work",
-      latestAssistantPreview: "Rendering the inspector",
-      latestToolName: "shell_command",
-      latestToolStatus: "completed",
       lastResumeSessionId: "session-4",
+      pendingApprovalCount: 1,
       reviewFindingCount: 1,
       configStatus: "invalid",
       configIssueCount: 1,
-      configDirty: true,
       healthyMcpServerCount: 1,
       totalMcpServerCount: 2,
+    });
+  });
+
+  it("reports runtime token usage and cost in the status summary", () => {
+    const state = reduceShellState(
+      createInitialShellState(),
+      createInteractionEventAction(
+        createInteractionEvent(
+          "runtime.usage.updated",
+          {
+            runtime: {
+              modelName: "deepseek-chat",
+              usage: {
+                promptTokens: 1200,
+                completionTokens: 800,
+                totalTokens: 2000,
+                calls: 3,
+              },
+              cost: {
+                currency: "¥",
+                totalCost: 0.0042,
+                byModel: {},
+              },
+            },
+          },
+          "2026-07-26T14:20:00.000Z",
+        ),
+      ),
+    );
+
+    expect(selectStatusSummary(state)).toMatchObject({
+      modelName: "deepseek-chat",
+      promptTokens: 1200,
+      completionTokens: 800,
+      totalTokens: 2000,
+      llmCalls: 3,
+      currency: "¥",
+      totalCost: 0.0042,
+    });
+    expect(selectStatusBarSummary(state)).toMatchObject({
+      modelName: "deepseek-chat",
+      totalTokens: 2000,
+      totalCost: 0.0042,
+    });
+  });
+
+  it("falls back to neutral runtime values before any llm call", () => {
+    const summary = selectStatusSummary(createInitialShellState());
+
+    expect(summary).toMatchObject({
+      modelName: "n/a",
+      totalTokens: 0,
+      llmCalls: 0,
+      totalCost: undefined,
     });
   });
 
@@ -402,8 +435,6 @@ describe("shell state selectors", () => {
     expect(selectStatusBarSummary(state)).toMatchObject({
       activeTaskCount: 1,
     });
-    expect(selectRailItems(state).find((item) => item.scene === "tasks")).toMatchObject({
-      badge: "1",
-    });
+    expect(selectStatusSummary(state).taskCounts.awaiting_approval).toBe(1);
   });
 });

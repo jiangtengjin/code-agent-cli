@@ -2,9 +2,13 @@ import type { InteractionEventEmitter } from "../../interaction/emitter.js";
 import type { InteractionEvent } from "../../interaction/events.js";
 import type { InteractionRenderer } from "../../interaction/renderer-contract.js";
 import type { TUIScene } from "../types.js";
-import { createInteractionEventAction, createSceneChangedAction, type ShellAction } from "./actions.js";
+import {
+  type ShellAction,
+  createInteractionEventAction,
+  createSceneChangedAction,
+} from "./actions.js";
 import { reduceShellState } from "./reducer.js";
-import { createInitialShellState, type ShellState } from "./state.js";
+import { type ShellState, createInitialShellState } from "./state.js";
 
 type ShellStoreListener = (state: ShellState) => void;
 type InteractionEventSource = Pick<InteractionEventEmitter, "on">;

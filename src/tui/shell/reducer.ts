@@ -2,12 +2,12 @@ import type { InteractionEvent } from "../../interaction/events.js";
 import type { LLMContentPart } from "../../types/provider.js";
 import type { ShellAction } from "./actions.js";
 import {
-  createInitialShellState,
   type ShellApprovalEntry,
   type ShellMessageEntry,
   type ShellState,
   type ShellTaskEntry,
   type ShellToolEntry,
+  createInitialShellState,
 } from "./state.js";
 
 function flattenMessageContent(content: string | LLMContentPart[] | null): string {
@@ -32,7 +32,9 @@ function flattenMessageContent(content: string | LLMContentPart[] | null): strin
     .trim();
 }
 
-function toMessageEntry(event: Extract<InteractionEvent, { type: "message.added" }>): ShellMessageEntry {
+function toMessageEntry(
+  event: Extract<InteractionEvent, { type: "message.added" }>,
+): ShellMessageEntry {
   return {
     id: `${event.createdAt}:${event.message.role}`,
     createdAt: event.createdAt,
@@ -50,7 +52,7 @@ function upsertTool(
   const existing = index >= 0 ? tools[index] : undefined;
   const startedAt =
     existing?.startedAt ??
-    (event.type === "tool.started" ? event.createdAt : existing?.finishedAt ?? event.createdAt);
+    (event.type === "tool.started" ? event.createdAt : (existing?.finishedAt ?? event.createdAt));
   const nextTool: ShellToolEntry =
     event.type === "tool.started"
       ? {
@@ -119,7 +121,9 @@ function upsertApproval(
     return [...items, nextApproval];
   }
 
-  return items.map((approval, approvalIndex) => (approvalIndex === index ? nextApproval : approval));
+  return items.map((approval, approvalIndex) =>
+    approvalIndex === index ? nextApproval : approval,
+  );
 }
 
 function upsertTask(
@@ -236,6 +240,12 @@ function reduceInteractionEvent(state: ShellState, event: InteractionEvent): She
       return {
         ...state,
         mcpServers: event.servers,
+        lastEventAt: event.createdAt,
+      };
+    case "runtime.usage.updated":
+      return {
+        ...state,
+        runtime: event.runtime,
         lastEventAt: event.createdAt,
       };
   }

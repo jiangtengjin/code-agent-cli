@@ -1,5 +1,7 @@
-import type { ChatMode } from "../types/mode.js";
+import type { CostSnapshot } from "../llm/cost-tracker.js";
+import type { UsageSnapshot } from "../session/usage.js";
 import type { Config } from "../types/config.js";
+import type { ChatMode } from "../types/mode.js";
 import type { LLMMessage } from "../types/provider.js";
 import type { SessionSummary } from "../types/session.js";
 import type { ToolCall, ToolResult } from "../types/tool.js";
@@ -73,6 +75,18 @@ export interface ConfigSnapshot {
   dirty: boolean;
   diff?: string;
   updatedAt: string;
+}
+
+/**
+ * 运行时用量快照。
+ *
+ * `/status` 面板要在不打断对话的前提下回答「用了多少 token、花了多少钱、
+ * 现在跑在哪个模型上」，所以把这三者合成一个事件推给 Shell。
+ */
+export interface RuntimeUsageSnapshot {
+  modelName: string;
+  usage: UsageSnapshot;
+  cost?: CostSnapshot;
 }
 
 export type MCPHealthStatus = "starting" | "healthy" | "degraded" | "stopped" | "failed";
@@ -155,6 +169,11 @@ export type InteractionEvent =
       type: "mcp.health.updated";
       createdAt: string;
       servers: MCPHealthSnapshot[];
+    }
+  | {
+      type: "runtime.usage.updated";
+      createdAt: string;
+      runtime: RuntimeUsageSnapshot;
     };
 
 export type InteractionEventType = InteractionEvent["type"];

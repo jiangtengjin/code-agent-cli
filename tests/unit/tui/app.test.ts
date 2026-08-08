@@ -10,6 +10,15 @@ import {
 import { reduceShellState } from "../../../src/tui/shell/reducer.js";
 import { createInitialShellState } from "../../../src/tui/shell/state.js";
 import { createShellStore } from "../../../src/tui/shell/store.js";
+import type { TerminalCapabilities } from "../../../src/tui/types.js";
+
+const FULL_CAPABILITIES: TerminalCapabilities = {
+  level: "full",
+  isTTY: true,
+  supportsAltScreen: true,
+  supportsColor: true,
+  reason: "interactive-terminal",
+};
 
 async function flushInput(): Promise<void> {
   await new Promise((resolve) => {
@@ -18,7 +27,26 @@ async function flushInput(): Promise<void> {
 }
 
 describe("TUIApp", () => {
-  it("renders the shell foundation and home overview from shell state", () => {
+  it("starts in the chat scene and onboards with slash commands", () => {
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: FULL_CAPABILITIES,
+        shellState: createInitialShellState(),
+      }),
+    );
+
+    const frame = result.lastFrame() ?? "";
+    // 根场景就是对话：没有面包屑，正文直接给上手引导。
+    expect(frame).toContain("Chat");
+    expect(frame).not.toContain("Chat ›");
+    expect(frame).toContain("/help");
+    expect(frame).toContain("/status");
+    expect(frame).toContain("/mode");
+    expect(frame).toContain("描述你要做的事，或输入 / 查看命令");
+    result.unmount();
+  });
+
+  it("renders the status bar from shell state", () => {
     const shellState = [
       createInteractionEvent(
         "session.changed",
@@ -30,7 +58,7 @@ describe("TUIApp", () => {
             workspaceKey: "workspace-a",
             workspacePath: "D:/JAVA/code-agent-cli",
             status: "running",
-            mode: "normal",
+            mode: "plan",
             createdAt: "2026-07-26T12:00:00.000Z",
             updatedAt: "2026-07-26T12:01:00.000Z",
             lastActiveAt: "2026-07-26T12:01:00.000Z",
@@ -40,14 +68,19 @@ describe("TUIApp", () => {
         "2026-07-26T12:00:30.000Z",
       ),
       createInteractionEvent(
-        "message.added",
+        "runtime.usage.updated",
         {
-          message: {
-            role: "assistant",
-            content: "Rendering the home scene",
+          runtime: {
+            modelName: "deepseek-chat",
+            usage: {
+              promptTokens: 900,
+              completionTokens: 300,
+              totalTokens: 1200,
+              calls: 2,
+            },
           },
         },
-        "2026-07-26T12:00:45.000Z",
+        "2026-07-26T12:00:40.000Z",
       ),
       createInteractionEvent(
         "approval.requested",
@@ -60,7 +93,7 @@ describe("TUIApp", () => {
               args: {},
             },
             title: "Approve write",
-            summary: "Write home scene component",
+            summary: "Write the chat scene component",
             risk: "medium",
           },
         },
@@ -85,32 +118,24 @@ describe("TUIApp", () => {
 
     const result = render(
       React.createElement(TUIApp, {
-        capabilities: {
-          level: "full",
-          isTTY: true,
-          supportsAltScreen: true,
-          supportsColor: true,
-          reason: "interactive-terminal",
-        },
+        capabilities: FULL_CAPABILITIES,
         shellState,
       }),
     );
 
-    expect(result.lastFrame()).toContain("Code Agent CLI");
-    expect(result.lastFrame()).toContain("Current scene: home");
-    expect(result.lastFrame()).toContain("Status");
-    expect(result.lastFrame()).toContain("workspace: D:/JAVA/code-agent-cli");
-    expect(result.lastFrame()).toContain("Rail");
-    expect(result.lastFrame()).toContain("> Home");
-    expect(result.lastFrame()).toContain("Inspector");
-    expect(result.lastFrame()).toContain("session: Build unified shell");
-    expect(result.lastFrame()).toContain("Composer");
-    expect(result.lastFrame()).toContain("Type a task or /goto <scene>");
-    expect(result.lastFrame()).toContain("Pending approvals: 1");
+    const frame = result.lastFrame() ?? "";
+    expect(frame).toContain("plan");
+    expect(frame).toContain("deepseek-chat");
+    expect(frame).toContain("running");
+    expect(frame).toContain("code-agent-cli");
+    expect(frame).toContain("1.2k tok");
+    // 需要动作的计数才上状态栏
+    expect(frame).toContain("approvals 1");
+    expect(frame).toContain("tasks 1");
     result.unmount();
   });
 
-  it("renders the chat scene with recent messages and tool activity", () => {
+  it("renders the chat transcript as one chronological stream", () => {
     const shellState = [
       createInteractionEvent(
         "message.added",
@@ -152,6 +177,16 @@ describe("TUIApp", () => {
         },
         "2026-07-26T12:02:20.000Z",
       ),
+      createInteractionEvent(
+        "message.added",
+        {
+          message: {
+            role: "assistant",
+            content: "Tests are green",
+          },
+        },
+        "2026-07-26T12:02:30.000Z",
+      ),
     ].reduce(
       (state, event) => reduceShellState(state, createInteractionEventAction(event)),
       reduceShellState(createInitialShellState(), createSceneChangedAction("chat")),
@@ -159,22 +194,83 @@ describe("TUIApp", () => {
 
     const result = render(
       React.createElement(TUIApp, {
-        capabilities: {
-          level: "full",
-          isTTY: true,
-          supportsAltScreen: true,
-          supportsColor: true,
-          reason: "interactive-terminal",
-        },
+        capabilities: FULL_CAPABILITIES,
         shellState,
       }),
     );
 
-    expect(result.lastFrame()).toContain("Current scene: chat");
-    expect(result.lastFrame()).toContain("> Chat");
-    expect(result.lastFrame()).toContain("Chat");
-    expect(result.lastFrame()).toContain("user: Render the chat scene");
-    expect(result.lastFrame()).toContain("shell_command [completed]");
+    const frame = result.lastFrame() ?? "";
+    expect(frame).toContain("Render the chat scene");
+    expect(frame).toContain("shell_command");
+    expect(frame).toContain("pnpm test");
+    expect(frame).toContain("Tests are green");
+    // 消息与工具混排，阅读顺序就是发生顺序
+    expect(frame.indexOf("Render the chat scene")).toBeLessThan(frame.indexOf("shell_command"));
+    expect(frame.indexOf("shell_command")).toBeLessThan(frame.indexOf("Tests are green"));
+    result.unmount();
+  });
+
+  it("points pending approvals at the approvals command from inside chat", () => {
+    const shellState = [
+      createInteractionEvent(
+        "message.added",
+        {
+          message: {
+            role: "user",
+            content: "Commit the work",
+          },
+        },
+        "2026-07-26T12:03:00.000Z",
+      ),
+      createInteractionEvent(
+        "approval.requested",
+        {
+          request: {
+            id: "approval-9",
+            toolCall: {
+              id: "tool-9",
+              name: "git commit",
+              args: {},
+            },
+            title: "Approve commit",
+            summary: "Create the commit",
+            risk: "high",
+          },
+        },
+        "2026-07-26T12:03:10.000Z",
+      ),
+    ].reduce(
+      (state, event) => reduceShellState(state, createInteractionEventAction(event)),
+      createInitialShellState(),
+    );
+
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: FULL_CAPABILITIES,
+        shellState,
+      }),
+    );
+
+    expect(result.lastFrame() ?? "").toContain("/approvals");
+    result.unmount();
+  });
+
+  it("renders nested scenes with a breadcrumb back to chat", () => {
+    const shellState = reduceShellState(
+      createInitialShellState(),
+      createSceneChangedAction("tasks"),
+    );
+
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: FULL_CAPABILITIES,
+        shellState,
+      }),
+    );
+
+    const frame = result.lastFrame() ?? "";
+    expect(frame).toContain("Chat › Tasks");
+    expect(frame).toContain("Esc 返回对话");
     result.unmount();
   });
 
@@ -257,25 +353,18 @@ describe("TUIApp", () => {
 
     const result = render(
       React.createElement(TUIApp, {
-        capabilities: {
-          level: "full",
-          isTTY: true,
-          supportsAltScreen: true,
-          supportsColor: true,
-          reason: "interactive-terminal",
-        },
+        capabilities: FULL_CAPABILITIES,
         shellState,
       }),
     );
 
-    expect(result.lastFrame()).toContain("Current scene: tasks");
-    expect(result.lastFrame()).toContain("> Tasks");
-    expect(result.lastFrame()).toContain("Tasks");
-    expect(result.lastFrame()).toContain("Session focus: Task center");
-    expect(result.lastFrame()).toContain("Active: 2 | Queued: 1 | Finished: 1");
-    expect(result.lastFrame()).toContain("Approve release commit [awaiting_approval]");
-    expect(result.lastFrame()).toContain("Backfill MCP status [pending]");
-    expect(result.lastFrame()).toContain("Fix stale draft restore [failed]");
+    const frame = result.lastFrame() ?? "";
+    expect(frame).toContain("Chat › Tasks");
+    expect(frame).toContain("Session focus: Task center");
+    expect(frame).toContain("Active: 2 | Queued: 1 | Finished: 1");
+    expect(frame).toContain("Approve release commit [awaiting_approval]");
+    expect(frame).toContain("Backfill MCP status [pending]");
+    expect(frame).toContain("Fix stale draft restore [failed]");
     result.unmount();
   });
 
@@ -335,24 +424,17 @@ describe("TUIApp", () => {
 
     const result = render(
       React.createElement(TUIApp, {
-        capabilities: {
-          level: "full",
-          isTTY: true,
-          supportsAltScreen: true,
-          supportsColor: true,
-          reason: "interactive-terminal",
-        },
+        capabilities: FULL_CAPABILITIES,
         shellState,
       }),
     );
 
-    expect(result.lastFrame()).toContain("Current scene: approvals");
-    expect(result.lastFrame()).toContain("> Approvals");
-    expect(result.lastFrame()).toContain("Approvals");
-    expect(result.lastFrame()).toContain("Pending: 1 | Resolved: 1");
-    expect(result.lastFrame()).toContain("Approve write_file [pending]");
-    expect(result.lastFrame()).toContain("Approve git show [approved]");
-    expect(result.lastFrame()).toContain("Update the shell renderer");
+    const frame = result.lastFrame() ?? "";
+    expect(frame).toContain("Chat › Approvals");
+    expect(frame).toContain("Pending: 1 | Resolved: 1");
+    expect(frame).toContain("Approve write_file [pending]");
+    expect(frame).toContain("Approve git show [approved]");
+    expect(frame).toContain("Update the shell renderer");
     result.unmount();
   });
 
@@ -399,24 +481,17 @@ describe("TUIApp", () => {
 
     const result = render(
       React.createElement(TUIApp, {
-        capabilities: {
-          level: "full",
-          isTTY: true,
-          supportsAltScreen: true,
-          supportsColor: true,
-          reason: "interactive-terminal",
-        },
+        capabilities: FULL_CAPABILITIES,
         shellState,
       }),
     );
 
-    expect(result.lastFrame()).toContain("Current scene: resume");
-    expect(result.lastFrame()).toContain("> Resume");
-    expect(result.lastFrame()).toContain("Resume");
-    expect(result.lastFrame()).toContain("Catalog: 2 sessions");
-    expect(result.lastFrame()).toContain("Last resumed: session-11");
-    expect(result.lastFrame()).toContain("Fix auth timeout [running]");
-    expect(result.lastFrame()).toContain("Review MCP bootstrap [idle]");
+    const frame = result.lastFrame() ?? "";
+    expect(frame).toContain("Chat › Resume");
+    expect(frame).toContain("Catalog: 2 sessions");
+    expect(frame).toContain("Last resumed: session-11");
+    expect(frame).toContain("Fix auth timeout [running]");
+    expect(frame).toContain("Review MCP bootstrap [idle]");
     result.unmount();
   });
 
@@ -452,23 +527,16 @@ describe("TUIApp", () => {
 
     const result = render(
       React.createElement(TUIApp, {
-        capabilities: {
-          level: "full",
-          isTTY: true,
-          supportsAltScreen: true,
-          supportsColor: true,
-          reason: "interactive-terminal",
-        },
+        capabilities: FULL_CAPABILITIES,
         shellState,
       }),
     );
 
-    expect(result.lastFrame()).toContain("Current scene: review");
-    expect(result.lastFrame()).toContain("> Review");
-    expect(result.lastFrame()).toContain("Review");
-    expect(result.lastFrame()).toContain("Findings: 2");
-    expect(result.lastFrame()).toContain("Approval stuck [high]");
-    expect(result.lastFrame()).toContain("Missing tests [medium]");
+    const frame = result.lastFrame() ?? "";
+    expect(frame).toContain("Chat › Review");
+    expect(frame).toContain("Findings: 2");
+    expect(frame).toContain("Approval stuck [high]");
+    expect(frame).toContain("Missing tests [medium]");
     result.unmount();
   });
 
@@ -515,24 +583,17 @@ describe("TUIApp", () => {
 
     const result = render(
       React.createElement(TUIApp, {
-        capabilities: {
-          level: "full",
-          isTTY: true,
-          supportsAltScreen: true,
-          supportsColor: true,
-          reason: "interactive-terminal",
-        },
+        capabilities: FULL_CAPABILITIES,
         shellState,
       }),
     );
 
-    expect(result.lastFrame()).toContain("Current scene: settings");
-    expect(result.lastFrame()).toContain("> Settings");
-    expect(result.lastFrame()).toContain("Settings");
-    expect(result.lastFrame()).toContain("dirty: yes");
-    expect(result.lastFrame()).toContain("validation: invalid");
-    expect(result.lastFrame()).toContain("Unknown model alias");
-    expect(result.lastFrame()).toContain('+    "model": "qwen-plus"');
+    const frame = result.lastFrame() ?? "";
+    expect(frame).toContain("Chat › Settings");
+    expect(frame).toContain("dirty: yes");
+    expect(frame).toContain("validation: invalid");
+    expect(frame).toContain("Unknown model alias");
+    expect(frame).toContain('+    "model": "qwen-plus"');
     result.unmount();
   });
 
@@ -564,24 +625,17 @@ describe("TUIApp", () => {
 
     const result = render(
       React.createElement(TUIApp, {
-        capabilities: {
-          level: "full",
-          isTTY: true,
-          supportsAltScreen: true,
-          supportsColor: true,
-          reason: "interactive-terminal",
-        },
+        capabilities: FULL_CAPABILITIES,
         shellState,
       }),
     );
 
-    expect(result.lastFrame()).toContain("Current scene: mcp");
-    expect(result.lastFrame()).toContain("> MCP");
-    expect(result.lastFrame()).toContain("MCP");
-    expect(result.lastFrame()).toContain("Servers: 2 | Healthy: 1 | Degraded: 1");
-    expect(result.lastFrame()).toContain("filesystem [healthy]");
-    expect(result.lastFrame()).toContain("github [degraded]");
-    expect(result.lastFrame()).toContain("Heartbeat timeout");
+    const frame = result.lastFrame() ?? "";
+    expect(frame).toContain("Chat › MCP");
+    expect(frame).toContain("Servers: 2 | Healthy: 1 | Degraded: 1");
+    expect(frame).toContain("filesystem [healthy]");
+    expect(frame).toContain("github [degraded]");
+    expect(frame).toContain("Heartbeat timeout");
     result.unmount();
   });
 
@@ -589,18 +643,16 @@ describe("TUIApp", () => {
     const store = createShellStore();
     const result = render(
       React.createElement(TUIApp, {
-        capabilities: {
-          level: "full",
-          isTTY: true,
-          supportsAltScreen: true,
-          supportsColor: true,
-          reason: "interactive-terminal",
-        },
+        capabilities: FULL_CAPABILITIES,
         shellStore: store,
       }),
     );
 
-    expect(result.lastFrame()).toContain("Current scene: home");
+    expect(result.lastFrame()).not.toContain("Chat ›");
+
+    store.navigate("tasks");
+    await flushInput();
+    expect(result.lastFrame()).toContain("Chat › Tasks");
 
     store.navigate("chat");
     store.render(
@@ -613,8 +665,8 @@ describe("TUIApp", () => {
     );
     await flushInput();
 
-    expect(result.lastFrame()).toContain("Current scene: chat");
-    expect(result.lastFrame()).toContain("assistant: Store-driven update");
+    expect(result.lastFrame()).not.toContain("Chat ›");
+    expect(result.lastFrame()).toContain("Store-driven update");
     result.unmount();
     store.dispose();
   });
@@ -623,13 +675,7 @@ describe("TUIApp", () => {
     const store = createShellStore();
     const result = render(
       React.createElement(TUIApp, {
-        capabilities: {
-          level: "full",
-          isTTY: true,
-          supportsAltScreen: true,
-          supportsColor: true,
-          reason: "interactive-terminal",
-        },
+        capabilities: FULL_CAPABILITIES,
         shellStore: store,
       }),
     );
@@ -637,12 +683,12 @@ describe("TUIApp", () => {
     result.stdin.write("hello tui");
     await flushInput();
 
-    expect(result.lastFrame()).toContain("draft: hello tui");
+    expect(result.lastFrame()).toContain("hello tui");
 
     result.stdin.write("\u001B");
     await flushInput();
 
-    expect(result.lastFrame()).not.toContain("draft: hello tui");
+    expect(result.lastFrame()).not.toContain("hello tui");
     result.unmount();
     store.dispose();
   });
@@ -651,13 +697,7 @@ describe("TUIApp", () => {
     const store = createShellStore();
     const result = render(
       React.createElement(TUIApp, {
-        capabilities: {
-          level: "full",
-          isTTY: true,
-          supportsAltScreen: true,
-          supportsColor: true,
-          reason: "interactive-terminal",
-        },
+        capabilities: FULL_CAPABILITIES,
         shellStore: store,
       }),
     );
@@ -665,7 +705,140 @@ describe("TUIApp", () => {
     result.stdin.write("统一 tui");
     await flushInput();
 
-    expect(result.lastFrame()).toContain("draft: 统一 tui");
+    expect(result.lastFrame()).toContain("统一 tui");
+    result.unmount();
+    store.dispose();
+  });
+
+  it("suggests commands as soon as the user types a slash", async () => {
+    const store = createShellStore();
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: FULL_CAPABILITIES,
+        shellStore: store,
+      }),
+    );
+
+    result.stdin.write("/");
+    await flushInput();
+
+    const frame = result.lastFrame() ?? "";
+    // 建议列表就是发现机制：输一个 / 就能看到能做什么
+    expect(frame).toContain("/help");
+    expect(frame).toContain("列出全部命令与快捷键");
+    expect(frame).toContain("more");
+    result.unmount();
+    store.dispose();
+  });
+
+  it("narrows suggestions while typing and accepts one with tab", async () => {
+    const store = createShellStore();
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: FULL_CAPABILITIES,
+        shellStore: store,
+      }),
+    );
+
+    result.stdin.write("/mo");
+    await flushInput();
+    expect(result.lastFrame()).toContain("/mode");
+
+    result.stdin.write("\t");
+    await flushInput();
+    expect(result.lastFrame()).toContain("/mode");
+    // 采纳后进入参数区，建议列表让位给参数输入
+    expect(result.lastFrame()).not.toContain("<normal|auto|plan|edit>");
+    result.unmount();
+    store.dispose();
+  });
+
+  it("opens the help panel locally without touching the command bridge", async () => {
+    const store = createShellStore();
+    const onExecuteCommand = vi.fn(async () => ({ handled: true }));
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: FULL_CAPABILITIES,
+        shellStore: store,
+        onExecuteCommand,
+      }),
+    );
+
+    result.stdin.write("/help");
+    result.stdin.write("\r");
+    await flushInput();
+
+    const frame = result.lastFrame() ?? "";
+    expect(onExecuteCommand).not.toHaveBeenCalled();
+    expect(frame).toContain("快捷键");
+    expect(frame).toContain("先出计划，确认后执行");
+
+    result.stdin.write("\u001B");
+    await flushInput();
+    expect(result.lastFrame()).not.toContain("先出计划，确认后执行");
+    result.unmount();
+    store.dispose();
+  });
+
+  it("opens the status panel locally", async () => {
+    const store = createShellStore();
+    const onExecuteCommand = vi.fn(async () => ({ handled: true }));
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: FULL_CAPABILITIES,
+        shellStore: store,
+        onExecuteCommand,
+      }),
+    );
+
+    result.stdin.write("/status");
+    result.stdin.write("\r");
+    await flushInput();
+
+    expect(onExecuteCommand).not.toHaveBeenCalled();
+    expect(result.lastFrame() ?? "").toContain("无待处理事项");
+    result.unmount();
+    store.dispose();
+  });
+
+  it("navigates argument-free scene commands locally", async () => {
+    const store = createShellStore();
+    const onExecuteCommand = vi.fn(async () => ({ handled: true }));
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: FULL_CAPABILITIES,
+        shellStore: store,
+        onExecuteCommand,
+      }),
+    );
+
+    result.stdin.write("/tasks");
+    result.stdin.write("\r");
+    await flushInput();
+
+    // 无参数的场景命令不必绕 controller 一趟
+    expect(onExecuteCommand).not.toHaveBeenCalled();
+    expect(result.lastFrame()).toContain("Chat › Tasks");
+    result.unmount();
+    store.dispose();
+  });
+
+  it("returns to chat with escape from a nested scene", async () => {
+    const store = createShellStore();
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: FULL_CAPABILITIES,
+        shellStore: store,
+      }),
+    );
+
+    store.navigate("review");
+    await flushInput();
+    expect(result.lastFrame()).toContain("Chat › Review");
+
+    result.stdin.write("\u001B");
+    await flushInput();
+    expect(result.lastFrame()).not.toContain("Chat ›");
     result.unmount();
     store.dispose();
   });
@@ -674,13 +847,7 @@ describe("TUIApp", () => {
     const store = createShellStore();
     const result = render(
       React.createElement(TUIApp, {
-        capabilities: {
-          level: "full",
-          isTTY: true,
-          supportsAltScreen: true,
-          supportsColor: true,
-          reason: "interactive-terminal",
-        },
+        capabilities: FULL_CAPABILITIES,
         shellStore: store,
       }),
     );
@@ -689,16 +856,34 @@ describe("TUIApp", () => {
     result.stdin.write("\t");
     await flushInput();
 
-    expect(result.lastFrame()).toContain("draft: /goto approvals");
+    expect(result.lastFrame()).toContain("/goto approvals");
 
     result.stdin.write("\r");
     await flushInput();
 
-    expect(result.lastFrame()).toContain("Current scene: approvals");
-    expect(result.lastFrame()).toContain("> Approvals");
-    expect(result.lastFrame()).toContain("Pending: 0 | Resolved: 0");
-    expect(result.lastFrame()).toContain("No approvals yet");
-    expect(result.lastFrame()).not.toContain("draft: /goto approvals");
+    const frame = result.lastFrame() ?? "";
+    expect(frame).toContain("Chat › Approvals");
+    expect(frame).toContain("Pending: 0 | Resolved: 0");
+    expect(frame).toContain("No approvals yet");
+    expect(frame).not.toContain("/goto approvals");
+    result.unmount();
+    store.dispose();
+  });
+
+  it("reports an unknown scene instead of navigating", async () => {
+    const store = createShellStore();
+    const result = render(
+      React.createElement(TUIApp, {
+        capabilities: FULL_CAPABILITIES,
+        shellStore: store,
+      }),
+    );
+
+    result.stdin.write("/goto nowhere");
+    result.stdin.write("\r");
+    await flushInput();
+
+    expect(result.lastFrame()).toContain("未知场景");
     result.unmount();
     store.dispose();
   });
@@ -708,25 +893,23 @@ describe("TUIApp", () => {
     const onSubmitTask = vi.fn(async () => undefined);
     const result = render(
       React.createElement(TUIApp, {
-        capabilities: {
-          level: "full",
-          isTTY: true,
-          supportsAltScreen: true,
-          supportsColor: true,
-          reason: "interactive-terminal",
-        },
+        capabilities: FULL_CAPABILITIES,
         shellStore: store,
         onSubmitTask,
       }),
     );
+
+    store.navigate("tasks");
+    await flushInput();
 
     result.stdin.write("build unified tui");
     result.stdin.write("\r");
     await flushInput();
 
     expect(onSubmitTask).toHaveBeenCalledWith("build unified tui");
-    expect(result.lastFrame()).toContain("Current scene: chat");
-    expect(result.lastFrame()).not.toContain("draft: build unified tui");
+    // 提交任务把用户带回对话，结果就在眼前
+    expect(result.lastFrame()).not.toContain("Chat ›");
+    expect(result.lastFrame()).not.toContain("build unified tui");
     result.unmount();
     store.dispose();
   });
@@ -740,13 +923,7 @@ describe("TUIApp", () => {
     }));
     const result = render(
       React.createElement(TUIApp, {
-        capabilities: {
-          level: "full",
-          isTTY: true,
-          supportsAltScreen: true,
-          supportsColor: true,
-          reason: "interactive-terminal",
-        },
+        capabilities: FULL_CAPABILITIES,
         shellStore: store,
         onExecuteCommand,
       }),
@@ -758,9 +935,8 @@ describe("TUIApp", () => {
     await flushInput();
 
     expect(onExecuteCommand).toHaveBeenCalledWith("/mode plan");
-    expect(result.lastFrame()).toContain("Current scene: chat");
+    expect(result.lastFrame()).not.toContain("Chat ›");
     expect(result.lastFrame()).toContain("mode: plan");
-    expect(result.lastFrame()).not.toContain("draft: /mode plan");
     result.unmount();
     store.dispose();
   });
@@ -768,30 +944,24 @@ describe("TUIApp", () => {
   it("restores the draft if a slash command fails", async () => {
     const store = createShellStore();
     const onExecuteCommand = vi.fn(async () => {
-      throw new Error("unknown command");
+      throw new Error("Approval not found: missing");
     });
     const result = render(
       React.createElement(TUIApp, {
-        capabilities: {
-          level: "full",
-          isTTY: true,
-          supportsAltScreen: true,
-          supportsColor: true,
-          reason: "interactive-terminal",
-        },
+        capabilities: FULL_CAPABILITIES,
         shellStore: store,
         onExecuteCommand,
       }),
     );
 
-    result.stdin.write("/review");
+    result.stdin.write("/approve missing");
     result.stdin.write("\r");
     await flushInput();
     await flushInput();
 
-    expect(onExecuteCommand).toHaveBeenCalledWith("/review");
-    expect(result.lastFrame()).toContain("draft: /review");
-    expect(result.lastFrame()).toContain("unknown command");
+    expect(onExecuteCommand).toHaveBeenCalledWith("/approve missing");
+    expect(result.lastFrame()).toContain("/approve missing");
+    expect(result.lastFrame()).toContain("Approval not found: missing");
     result.unmount();
     store.dispose();
   });
@@ -803,13 +973,7 @@ describe("TUIApp", () => {
     });
     const result = render(
       React.createElement(TUIApp, {
-        capabilities: {
-          level: "full",
-          isTTY: true,
-          supportsAltScreen: true,
-          supportsColor: true,
-          reason: "interactive-terminal",
-        },
+        capabilities: FULL_CAPABILITIES,
         shellStore: store,
         onSubmitTask,
       }),
@@ -821,7 +985,7 @@ describe("TUIApp", () => {
     await flushInput();
 
     expect(onSubmitTask).toHaveBeenCalledWith("retry task");
-    expect(result.lastFrame()).toContain("draft: retry task");
+    expect(result.lastFrame()).toContain("retry task");
     expect(result.lastFrame()).toContain("controller busy");
     result.unmount();
     store.dispose();
@@ -840,13 +1004,7 @@ describe("TUIApp", () => {
     );
     const result = render(
       React.createElement(TUIApp, {
-        capabilities: {
-          level: "full",
-          isTTY: true,
-          supportsAltScreen: true,
-          supportsColor: true,
-          reason: "interactive-terminal",
-        },
+        capabilities: FULL_CAPABILITIES,
         shellStore: store,
         onSubmitTask,
       }),
@@ -863,7 +1021,7 @@ describe("TUIApp", () => {
     await flushInput();
     await flushInput();
 
-    expect(result.lastFrame()).toContain("draft: next task");
+    expect(result.lastFrame()).toContain("next task");
     expect(result.lastFrame()).toContain("controller busy");
     result.unmount();
     store.dispose();

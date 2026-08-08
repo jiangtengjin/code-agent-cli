@@ -86,9 +86,107 @@ describe("dispatchShortcut", () => {
     hasComposer: true,
   };
 
-  it("clears the draft on escape", () => {
-    expect(dispatchShortcut(normalizeKeyInput("\u001B"), baseContext)).toEqual({
+  it("clears a non-empty draft on escape", () => {
+    expect(
+      dispatchShortcut(normalizeKeyInput("\u001B"), { ...baseContext, draft: "hello" }),
+    ).toEqual({
       type: "clear-draft",
+    });
+  });
+
+  describe("layered escape", () => {
+    // Esc 是唯一的「返回」键，按由近到远的层级依次回退。
+    it("closes an open panel before touching the draft", () => {
+      expect(
+        dispatchShortcut(normalizeKeyInput("\u001B"), {
+          ...baseContext,
+          draft: "hello",
+          panelOpen: true,
+        }),
+      ).toEqual({ type: "close-panel" });
+    });
+
+    it("returns to the root scene once the draft is empty", () => {
+      expect(
+        dispatchShortcut(normalizeKeyInput("\u001B"), {
+          ...baseContext,
+          activeScene: "tasks",
+        }),
+      ).toEqual({ type: "scene-back" });
+    });
+
+    it("prefers clearing the draft over leaving a nested scene", () => {
+      expect(
+        dispatchShortcut(normalizeKeyInput("\u001B"), {
+          ...baseContext,
+          draft: "hello",
+          activeScene: "tasks",
+        }),
+      ).toEqual({ type: "clear-draft" });
+    });
+
+    it("is a noop at the root scene with an empty draft", () => {
+      expect(
+        dispatchShortcut(normalizeKeyInput("\u001B"), {
+          ...baseContext,
+          activeScene: "chat",
+        }),
+      ).toEqual({ type: "noop" });
+    });
+  });
+
+  describe("slash suggestions", () => {
+    const suggestionContext: ShortcutContext = {
+      draft: "/mo",
+      hasComposer: true,
+      suggestionCount: 3,
+    };
+
+    it("moves the highlight with arrow keys", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\u001B[B"), suggestionContext)).toEqual({
+        type: "suggestion-move",
+        direction: "down",
+      });
+      expect(dispatchShortcut(normalizeKeyInput("\u001B[A"), suggestionContext)).toEqual({
+        type: "suggestion-move",
+        direction: "up",
+      });
+    });
+
+    it("accepts the highlighted suggestion on tab", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\t"), suggestionContext)).toEqual({
+        type: "suggestion-accept",
+      });
+    });
+
+    it("falls back to prefix completion when no suggestions are visible", () => {
+      expect(
+        dispatchShortcut(normalizeKeyInput("\t"), { ...baseContext, draft: "/goto ch" }),
+      ).toEqual({ type: "complete", draft: "/goto ch" });
+    });
+
+    it("ignores arrow keys when no suggestions are visible", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\u001B[B"), baseContext)).toEqual({
+        type: "noop",
+      });
+    });
+  });
+
+  describe("when a panel is open", () => {
+    const panelContext: ShortcutContext = {
+      draft: "",
+      hasComposer: true,
+      panelOpen: true,
+    };
+
+    it("closes on enter as well as escape", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\r"), panelContext)).toEqual({
+        type: "close-panel",
+      });
+    });
+
+    it("swallows text input so the draft is not edited while reading", () => {
+      expect(dispatchShortcut(normalizeKeyInput("abc"), panelContext)).toEqual({ type: "noop" });
     });
   });
 
@@ -102,7 +200,7 @@ describe("dispatchShortcut", () => {
     expect(dispatchShortcut(normalizeKeyInput("\r"), baseContext)).toEqual({ type: "noop" });
   });
 
-  it("requests completion on tab", () => {
+  it("requests completion on tab when no suggestions are visible", () => {
     expect(
       dispatchShortcut(normalizeKeyInput("\t"), { ...baseContext, draft: "/goto ch" }),
     ).toEqual({
@@ -145,7 +243,7 @@ describe("dispatchShortcut", () => {
     });
   });
 
-  it("exposes shortcut hints for the rail", () => {
+  it("exposes shortcut hints for the composer", () => {
     expect(SHELL_SHORTCUT_HINTS.length).toBeGreaterThan(0);
     for (const hint of SHELL_SHORTCUT_HINTS) {
       expect(typeof hint).toBe("string");

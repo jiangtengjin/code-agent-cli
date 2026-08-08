@@ -23,7 +23,11 @@ function renderTaskSection(title: string, tasks: ShellTaskEntry[], emptyLabel: s
   return (
     <Box flexDirection="column" marginTop={1}>
       <Text>{title}</Text>
-      {tasks.length === 0 ? <Text dimColor>{emptyLabel}</Text> : tasks.map((task) => renderTaskRow(task))}
+      {tasks.length === 0 ? (
+        <Text dimColor>{emptyLabel}</Text>
+      ) : (
+        tasks.map((task) => renderTaskRow(task))
+      )}
     </Box>
   );
 }
@@ -34,7 +38,8 @@ export function TasksScene({ summary }: TasksSceneProps) {
       <Text>Tasks</Text>
       <Text>Session focus: {summary.sessionTitle}</Text>
       <Text dimColor>
-        Active: {summary.activeCount} | Queued: {summary.queuedCount} | Finished: {summary.finishedCount}
+        Active: {summary.activeCount} | Queued: {summary.queuedCount} | Finished:{" "}
+        {summary.finishedCount}
       </Text>
       <Text dimColor>
         Running: {summary.counts.running} | Awaiting approval: {summary.counts.awaiting_approval} |
