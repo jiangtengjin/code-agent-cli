@@ -76,6 +76,14 @@ export interface SessionsConfig {
   includePromptSessions?: boolean;
 }
 
+/** 子 Agent 委派配置 */
+export interface AgentsConfig {
+  /** 是否启用子 agent 委派，关闭时 spawn_agent 工具不注册 */
+  enabled?: boolean;
+  /** 最大并发子 agent 数。本期串行执行，恒为 1，此字段仅为并行阶段预留 */
+  maxConcurrency?: number;
+}
+
 /** 根配置对象 */
 export interface Config {
   /** JSON Schema 地址，用于编辑器智能提示 */
@@ -98,6 +106,8 @@ export interface Config {
   costGuard?: CostGuardConfig;
   /** 会话持久化配置 */
   sessions?: SessionsConfig;
+  /** 子 Agent 委派配置 */
+  agents?: AgentsConfig;
   /** 自定义系统提示词 */
   systemPrompt?: string;
 }

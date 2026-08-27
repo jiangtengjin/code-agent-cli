@@ -1,7 +1,37 @@
 import { describe, expect, it } from "vitest";
-import { ConfigResolver } from "../../src/config/resolver.js";
+import { ConfigResolver, deepMerge } from "../../src/config/resolver.js";
 import { ConfigSchema, LLMConfigSchema } from "../../src/config/schema.js";
 import { isSensitivePath } from "../../src/utils/path.js";
+
+describe("deepMerge 的 agents 分层", () => {
+  it("对 agents 做浅合并而非整体替换", () => {
+    const merged = deepMerge(
+      { agents: { enabled: true, maxConcurrency: 1 } },
+      { agents: { maxConcurrency: 3 } },
+    );
+
+    expect(merged.agents).toEqual({ enabled: true, maxConcurrency: 3 });
+  });
+
+  it("base 无 agents 时直接采用后层值", () => {
+    const merged = deepMerge({}, { agents: { enabled: false } });
+
+    expect(merged.agents).toEqual({ enabled: false });
+  });
+
+  it("后层无 agents 时保留 base 值", () => {
+    const merged = deepMerge({ agents: { enabled: true } }, { yolo: true });
+
+    expect(merged.agents).toEqual({ enabled: true });
+  });
+
+  it("不改动传入的对象", () => {
+    const base = { agents: { enabled: true } };
+    deepMerge(base, { agents: { maxConcurrency: 2 } });
+
+    expect(base.agents).toEqual({ enabled: true });
+  });
+});
 
 describe("ConfigSchema 验证", () => {
   it("应接受有效的 LLM 配置", () => {
@@ -41,6 +71,18 @@ describe("ConfigSchema 验证", () => {
       yolo: false,
     });
     expect(result.success).toBe(true);
+  });
+
+  it("应接受 agents 配置块", () => {
+    const result = ConfigSchema.safeParse({
+      agents: { enabled: true, maxConcurrency: 1 },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("应拒绝非正整数的 agents.maxConcurrency", () => {
+    expect(ConfigSchema.safeParse({ agents: { maxConcurrency: 0 } }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ agents: { maxConcurrency: 1.5 } }).success).toBe(false);
   });
 
   it("应接受二期新增的配置块", () => {
