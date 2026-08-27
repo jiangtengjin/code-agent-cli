@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { loadAgentDefinitions } from "../../agents/loader.js";
+import { createSpawnAgentTool } from "../../agents/spawn.js";
 import { getGlobalConfigPath, loadConfigFile, writeConfigFile } from "../../config/manager.js";
 import { InteractionEventBridge } from "../../interaction/bridge.js";
 import { InteractionEventEmitter } from "../../interaction/emitter.js";
@@ -11,7 +13,7 @@ import { createTrackedMessagesHandler, toToolCall } from "../../interaction/runt
 import { CostTracker } from "../../llm/cost-tracker.js";
 import type { LLMProvider } from "../../llm/provider.js";
 import { createProviderFromConfig } from "../../llm/registry.js";
-import type { ModeHandler, ModeRunResult } from "../../modes/handler.js";
+import type { ModeHandler, ModeRunResult, RunContext } from "../../modes/handler.js";
 import { executeApprovedPlan } from "../../modes/plan.js";
 import { ModeRouter } from "../../modes/router.js";
 import { createTaskTiming } from "../../session/execution.js";
@@ -27,6 +29,7 @@ import { type WorkspaceInfo, resolveWorkspace } from "../../session/workspace.js
 import { createDefaultToolRegistry } from "../../tools/built-in/index.js";
 import { MCPServerManager } from "../../tools/mcp/manager.js";
 import type { ToolRegistry } from "../../tools/registry.js";
+import type { AgentDefinition } from "../../types/agent.js";
 import type { Config } from "../../types/config.js";
 import type { ChatMode } from "../../types/mode.js";
 import type { PlanState } from "../../types/plan.js";
@@ -92,6 +95,8 @@ export interface TUIChatControllerDependencies {
   eventEmitter?: InteractionEventEmitter;
   provider?: LLMProvider;
   toolRegistry?: ToolRegistry;
+  /** 注入 agent 定义，省略时从磁盘加载 */
+  agentDefinitions?: AgentDefinition[];
   modeRouter?: Pick<ModeRouter, "getHandler">;
   persistence?: ChatPersistence;
   resolveWorkspace?: (cwd: string) => Promise<WorkspaceInfo>;
@@ -317,6 +322,10 @@ class DefaultTUIChatController implements TUIChatController {
     id: string;
     title: string;
   };
+  /** 当前任务的运行上下文，供 spawn_agent 派生子级时读取父级依赖 */
+  private activeRunContext?: RunContext;
+  /** 子 agent 运行实例 id → 定义名，用于 task 行标题 */
+  private readonly subAgentTitles = new Map<string, string>();
   private savedConfig?: Config;
   private draftConfig?: Config;
 
@@ -518,6 +527,8 @@ class DefaultTUIChatController implements TUIChatController {
       },
     };
 
+    this.activeRunContext = runContext;
+
     try {
       const result = await this.executeTaskInput(input, handler, runContext);
       const taskStatus = result.reachedLimit
@@ -553,6 +564,10 @@ class DefaultTUIChatController implements TUIChatController {
         detail,
       });
       throw error;
+    } finally {
+      // 任务结束后不再允许派生子 agent
+      this.activeRunContext = undefined;
+      this.subAgentTitles.clear();
     }
   }
 
@@ -1113,9 +1128,68 @@ class DefaultTUIChatController implements TUIChatController {
   private getToolRegistry(): ToolRegistry {
     if (!this.toolRegistry) {
       this.toolRegistry = this.dependencies.toolRegistry ?? createDefaultToolRegistry();
+      this.registerSpawnAgentTool(this.toolRegistry);
     }
 
     return this.toolRegistry;
+  }
+
+  /**
+   * 注册 spawn_agent。
+   *
+   * 它不进 createDefaultToolRegistry：那里是无依赖的静态工具，而 spawn_agent
+   * 需要闭包捕获运行时上下文。没有可委派的 agent 定义时不注册——空 enum 的
+   * 工具只会让模型困惑。
+   */
+  private registerSpawnAgentTool(registry: ToolRegistry): void {
+    if (this.config.agents?.enabled === false) {
+      return;
+    }
+
+    const definitions = this.dependencies.agentDefinitions ?? loadAgentDefinitions(this.cwd);
+    if (definitions.length === 0) {
+      return;
+    }
+
+    registry.register(
+      createSpawnAgentTool({
+        definitions,
+        parentContext: () => {
+          if (!this.activeRunContext) {
+            throw new Error("spawn_agent 只能在任务执行期间调用");
+          }
+          return this.activeRunContext;
+        },
+        onAgentStart: (agentId, definition, task) => {
+          this.subAgentTitles.set(agentId, definition.name);
+          this.interaction.taskUpdated({
+            id: agentId,
+            title: `${definition.name}: ${task.slice(0, 60)}`,
+            status: "running",
+            mode: this.mode,
+          });
+        },
+        onAgentProgress: (agentId, detail) => {
+          this.interaction.taskUpdated({
+            id: agentId,
+            title: `${this.subAgentTitles.get(agentId) ?? "agent"}`,
+            status: "running",
+            mode: this.mode,
+            detail,
+          });
+        },
+        onAgentFinish: (agentId, success, detail) => {
+          this.interaction.taskUpdated({
+            id: agentId,
+            title: `${this.subAgentTitles.get(agentId) ?? "agent"}`,
+            status: success ? "completed" : "failed",
+            mode: this.mode,
+            detail,
+          });
+          this.subAgentTitles.delete(agentId);
+        },
+      }),
+    );
   }
 
   private getMCPManager(): Pick<MCPServerManager, "startAll"> {

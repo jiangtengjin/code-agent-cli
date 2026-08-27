@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import * as readline from "node:readline";
 import chalk from "chalk";
 import ora from "ora";
+import { loadAgentDefinitions } from "../agents/loader.js";
+import { createSpawnAgentTool } from "../agents/spawn.js";
 import { InteractionEventBridge } from "../interaction/bridge.js";
 import { InteractionEventEmitter } from "../interaction/emitter.js";
 import {
@@ -12,6 +14,7 @@ import {
 import { CostTracker, formatCostSnapshot } from "../llm/cost-tracker.js";
 import type { LLMProvider } from "../llm/provider.js";
 import { createProviderFromConfig } from "../llm/registry.js";
+import type { RunContext } from "../modes/handler.js";
 import { executeApprovedPlan, formatPlanState } from "../modes/plan.js";
 import { ModeRouter } from "../modes/router.js";
 import { createTaskTiming, formatTaskTiming } from "../session/execution.js";
@@ -22,6 +25,7 @@ import { UsageTracker, formatUsageSnapshot } from "../session/usage.js";
 import { resolveWorkspace } from "../session/workspace.js";
 import { createDefaultToolRegistry } from "../tools/built-in/index.js";
 import { MCPServerManager, type MCPSummary } from "../tools/mcp/manager.js";
+import type { ToolRegistry } from "../tools/registry.js";
 import type { Config } from "../types/config.js";
 import type { ChatMode } from "../types/mode.js";
 import type { PlanState } from "../types/plan.js";
@@ -799,6 +803,50 @@ async function loadInitialSession(
   return resolveSessionSummaryState(store, summary, options);
 }
 
+/**
+ * 给 CLI 路径注册 spawn_agent。
+ *
+ * CLI 的 runContext 与 spinner 都在每轮循环内才成型，因此依赖以 getter 传入。
+ * 无可委派 agent 或配置关闭时不注册。
+ */
+function registerSpawnAgentToolForCli(
+  toolRegistry: ToolRegistry,
+  config: Config,
+  getRunContext: () => RunContext | undefined,
+  setProgressText: (text: string) => void,
+): void {
+  if (config.agents?.enabled === false) {
+    return;
+  }
+
+  const definitions = loadAgentDefinitions(process.cwd());
+  if (definitions.length === 0) {
+    return;
+  }
+
+  toolRegistry.register(
+    createSpawnAgentTool({
+      definitions,
+      parentContext: () => {
+        const context = getRunContext();
+        if (!context) {
+          throw new Error("spawn_agent 只能在任务执行期间调用");
+        }
+        return context;
+      },
+      onAgentStart: (_agentId, definition) => {
+        setProgressText(`${definition.name} working...`);
+      },
+      onAgentProgress: (_agentId, detail) => {
+        setProgressText(`${detail}...`);
+      },
+      onAgentFinish: () => {
+        setProgressText("AI thinking...");
+      },
+    }),
+  );
+}
+
 export async function runPrompt(config: Config, prompt: string): Promise<void> {
   const provider = createProviderOrExit(config);
   if (!provider) {
@@ -933,6 +981,19 @@ export async function startChat(config: Config, options: StartChatOptions = {}):
       console.log(chalk.yellow(message));
     },
   });
+  // spawn_agent 与 spinner 都在每轮循环内才成型，故用可变引用桥接
+  let activeRunContext: RunContext | undefined;
+  let activeSpinner: { text: string } | undefined;
+  registerSpawnAgentToolForCli(
+    toolRegistry,
+    config,
+    () => activeRunContext,
+    (text) => {
+      if (activeSpinner) {
+        activeSpinner.text = text;
+      }
+    },
+  );
   const initialSessionLoad = await loadInitialSession(config, options);
   const initialSession = initialSessionLoad?.session;
   const messages: LLMMessage[] = initialSession ? [...initialSession.messages] : [];
@@ -1561,6 +1622,7 @@ export async function startChat(config: Config, options: StartChatOptions = {}):
 
       const timing = createTaskTiming();
       const spinner = ora({ text: "AI thinking...", color: "cyan" }).start();
+      activeSpinner = spinner;
       const handler = modeRouter.getHandler(mode);
       const abortController = new AbortController();
       activeRun = {
@@ -1632,6 +1694,8 @@ export async function startChat(config: Config, options: StartChatOptions = {}):
         },
       };
 
+      activeRunContext = runContext;
+
       try {
         if (mode === "plan" && pendingPlan) {
           if (isPlanApprovalInput(trimmed)) {
@@ -1672,6 +1736,8 @@ export async function startChat(config: Config, options: StartChatOptions = {}):
         }
       } finally {
         activeRun = undefined;
+        activeRunContext = undefined;
+        activeSpinner = undefined;
         spinner.stop();
       }
 

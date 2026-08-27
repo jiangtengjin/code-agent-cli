@@ -510,4 +510,125 @@ describe("createTUIChatController", () => {
     expect(store.getState().reviewFindings).toEqual(findings);
     store.dispose();
   });
+
+  it("delegates to a sub agent and keeps its tool calls out of the main timeline", async () => {
+    const emitter = new InteractionEventEmitter();
+    const store = createShellStore({ emitter });
+    const chat = vi
+      .fn()
+      // 主 agent 决定委派
+      .mockResolvedValueOnce({
+        content: "",
+        model: "deepseek-chat",
+        toolCalls: [
+          {
+            id: "call-1",
+            name: "spawn_agent",
+            args: { agent_type: "code-explorer", task: "查找 ToolRegistry 注册点" },
+          },
+        ],
+      })
+      // 子 agent 先调工具
+      .mockResolvedValueOnce({
+        content: "",
+        model: "deepseek-chat",
+        toolCalls: [{ id: "child-1", name: "grep_search", args: { pattern: "register" } }],
+      })
+      // 子 agent 给结论
+      .mockResolvedValueOnce({ content: "在 registry.ts:6", model: "deepseek-chat" })
+      // 主 agent 汇总
+      .mockResolvedValueOnce({ content: "已确认注册点在 registry.ts:6", model: "deepseek-chat" });
+
+    const toolRegistry = new ToolRegistry();
+    toolRegistry.register({
+      name: "grep_search",
+      description: "Search",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn(async () => ({ success: true, data: "1 match" })),
+    });
+
+    const controller = createTUIChatController(config, {
+      eventEmitter: emitter,
+      provider: { name: "test-provider", chat },
+      toolRegistry,
+      agentDefinitions: [
+        {
+          name: "code-explorer",
+          description: "定位实现",
+          systemPrompt: "你是探索专家",
+          maxIterations: 5,
+          source: "project",
+        },
+      ],
+      resolveWorkspace: async () => ({ key: "workspace-a", path: "D:/JAVA/code-agent-cli" }),
+      createTaskId: () => "task-1",
+      createSessionId: () => "session-1",
+      now: () => "2026-08-27T12:00:00.000Z",
+    });
+
+    await controller.submitTask("ToolRegistry 在哪注册");
+    await flushAsyncWork();
+
+    const state = store.getState();
+
+    // 子 agent 的 grep_search 不出现在主时间线，只有 spawn_agent 本身出现
+    expect(state.chat.tools.map((tool) => tool.name)).toEqual(["spawn_agent"]);
+
+    // 子 agent 的进展折叠成独立 task 行
+    const subAgentTask = state.tasks.find((task) => task.id !== "task-1");
+    expect(subAgentTask).toMatchObject({ status: "completed" });
+    expect(subAgentTask?.title).toContain("code-explorer");
+
+    store.dispose();
+  });
+
+  it("omits spawn_agent when no agent definitions are available", async () => {
+    const emitter = new InteractionEventEmitter();
+    const chat = vi.fn(async () => ({ content: "done", model: "deepseek-chat" }));
+    const controller = createTUIChatController(config, {
+      eventEmitter: emitter,
+      provider: { name: "test-provider", chat },
+      toolRegistry: new ToolRegistry(),
+      agentDefinitions: [],
+      resolveWorkspace: async () => ({ key: "workspace-a", path: "D:/JAVA/code-agent-cli" }),
+      createTaskId: () => "task-1",
+      createSessionId: () => "session-1",
+      now: () => "2026-08-27T12:00:00.000Z",
+    });
+
+    await controller.submitTask("hi");
+
+    const exposed = chat.mock.calls[0][0].tools ?? [];
+    expect(exposed.map((entry: { name: string }) => entry.name)).not.toContain("spawn_agent");
+  });
+
+  it("omits spawn_agent when agents are disabled in config", async () => {
+    const emitter = new InteractionEventEmitter();
+    const chat = vi.fn(async () => ({ content: "done", model: "deepseek-chat" }));
+    const controller = createTUIChatController(
+      { ...config, agents: { enabled: false } },
+      {
+        eventEmitter: emitter,
+        provider: { name: "test-provider", chat },
+        toolRegistry: new ToolRegistry(),
+        agentDefinitions: [
+          {
+            name: "code-explorer",
+            description: "定位实现",
+            maxIterations: 5,
+            source: "project",
+          },
+        ],
+        resolveWorkspace: async () => ({ key: "workspace-a", path: "D:/JAVA/code-agent-cli" }),
+        createTaskId: () => "task-1",
+        createSessionId: () => "session-1",
+          now: () => "2026-08-27T12:00:00.000Z",
+      },
+    );
+
+    await controller.submitTask("hi");
+
+    const exposed = chat.mock.calls[0][0].tools ?? [];
+    expect(exposed.map((entry: { name: string }) => entry.name)).not.toContain("spawn_agent");
+  });
 });
