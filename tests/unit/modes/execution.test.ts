@@ -357,4 +357,27 @@ describe("mode execution loop", () => {
       error: "Unknown tool: run_terminal",
     });
   });
+
+  it("prefers context.systemPrompt over config.systemPrompt", async () => {
+    const { provider, context } = createContext([{ content: "ok", model: "test" }]);
+    context.config.systemPrompt = "from config";
+    context.systemPrompt = "from agent";
+
+    await new NormalModeHandler().run("hi", context);
+
+    expect(provider.chat).toHaveBeenCalledWith(
+      expect.objectContaining({ systemPrompt: "from agent" }),
+    );
+  });
+
+  it("falls back to config.systemPrompt when context.systemPrompt is absent", async () => {
+    const { provider, context } = createContext([{ content: "ok", model: "test" }]);
+    context.config.systemPrompt = "from config";
+
+    await new NormalModeHandler().run("hi", context);
+
+    expect(provider.chat).toHaveBeenCalledWith(
+      expect.objectContaining({ systemPrompt: "from config" }),
+    );
+  });
 });
