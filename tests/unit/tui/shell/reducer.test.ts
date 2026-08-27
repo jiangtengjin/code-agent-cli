@@ -590,3 +590,165 @@ describe("selectStatusSummary", () => {
     });
   });
 });
+
+describe("reduceShellState 的 agent 归属", () => {
+  const parentSession = {
+    id: "session-parent",
+    kind: "interactive" as const,
+    title: "Parent conversation",
+    workspaceKey: "workspace-a",
+    workspacePath: "D:/JAVA/code-agent-cli",
+    status: "running" as const,
+    mode: "normal" as const,
+    createdAt: "2026-08-27T09:00:00.000Z",
+    updatedAt: "2026-08-27T09:00:00.000Z",
+    lastActiveAt: "2026-08-27T09:00:00.000Z",
+    turnCount: 1,
+  };
+
+  function stateWithParentConversation(): ShellState {
+    return reduceEvents([
+      createInteractionEvent(
+        "session.changed",
+        { summary: parentSession },
+        "2026-08-27T09:00:00.000Z",
+      ),
+      createInteractionEvent(
+        "message.added",
+        { message: { role: "user", content: "查一下 registry" } },
+        "2026-08-27T09:00:10.000Z",
+      ),
+      createInteractionEvent(
+        "tool.started",
+        {
+          toolCall: { id: "tool-parent", name: "read_file", args: { path: "README.md" } },
+          requiresApproval: false,
+        },
+        "2026-08-27T09:00:20.000Z",
+      ),
+    ]);
+  }
+
+  it("keeps a sub-agent session change from wiping the parent conversation", () => {
+    const before = stateWithParentConversation();
+
+    const after = reduceEvents(
+      [
+        createInteractionEvent(
+          "session.changed",
+          {
+            agentId: "agent-1",
+            agentName: "code-explorer",
+            summary: { ...parentSession, id: "session-child", title: "Sub agent" },
+          },
+          "2026-08-27T09:00:30.000Z",
+        ),
+      ],
+      before,
+    );
+
+    expect(after).toBe(before);
+    expect(after.currentSession?.id).toBe("session-parent");
+    expect(after.chat.messages).toHaveLength(1);
+    expect(after.chat.tools).toHaveLength(1);
+  });
+
+  it("still resets on a main-agent session change", () => {
+    const before = stateWithParentConversation();
+
+    const after = reduceEvents(
+      [
+        createInteractionEvent(
+          "session.changed",
+          { summary: { ...parentSession, id: "session-next", title: "Next" } },
+          "2026-08-27T09:00:30.000Z",
+        ),
+      ],
+      before,
+    );
+
+    expect(after.currentSession?.id).toBe("session-next");
+    expect(after.chat.messages).toEqual([]);
+    expect(after.chat.tools).toEqual([]);
+    expect(after.tasks).toEqual([]);
+  });
+
+  it("keeps sub-agent messages and tool calls out of the main timeline", () => {
+    const before = stateWithParentConversation();
+
+    const after = reduceEvents(
+      [
+        createInteractionEvent(
+          "message.added",
+          { agentId: "agent-1", message: { role: "assistant", content: "found it" } },
+          "2026-08-27T09:00:40.000Z",
+        ),
+        createInteractionEvent(
+          "tool.started",
+          {
+            agentId: "agent-1",
+            toolCall: { id: "tool-child", name: "grep_search", args: { pattern: "x" } },
+            requiresApproval: false,
+          },
+          "2026-08-27T09:00:50.000Z",
+        ),
+        createInteractionEvent(
+          "tool.finished",
+          {
+            agentId: "agent-1",
+            toolCall: { id: "tool-child", name: "grep_search", args: { pattern: "x" } },
+            result: { success: true, data: "3 matches" },
+          },
+          "2026-08-27T09:00:55.000Z",
+        ),
+      ],
+      before,
+    );
+
+    expect(after).toBe(before);
+    expect(after.chat.messages).toHaveLength(1);
+    expect(after.chat.tools.map((tool) => tool.id)).toEqual(["tool-parent"]);
+  });
+
+  it("surfaces sub-agent progress through task entries", () => {
+    const after = reduceEvents([
+      createInteractionEvent(
+        "task.updated",
+        {
+          agentId: "agent-1",
+          agentName: "code-explorer",
+          task: {
+            id: "agent-1",
+            title: "查找 ToolRegistry 的注册点",
+            status: "running",
+            detail: "grep_search",
+          },
+        },
+        "2026-08-27T09:01:00.000Z",
+      ),
+    ]);
+
+    expect(after.tasks).toMatchObject([{ id: "agent-1", status: "running" }]);
+  });
+
+  it("still surfaces approvals raised by a sub-agent", () => {
+    const after = reduceEvents([
+      createInteractionEvent(
+        "approval.requested",
+        {
+          agentId: "agent-1",
+          request: {
+            id: "approval-child",
+            toolCall: { id: "tool-child", name: "mcp_github_create_issue", args: {} },
+            title: "Approve MCP call",
+            summary: "Create an issue",
+            risk: "medium",
+          },
+        },
+        "2026-08-27T09:01:10.000Z",
+      ),
+    ]);
+
+    expect(after.approvals.items).toHaveLength(1);
+  });
+});

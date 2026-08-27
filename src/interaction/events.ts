@@ -98,83 +98,108 @@ export interface MCPHealthSnapshot {
   message?: string;
 }
 
-export type InteractionEvent =
-  | {
-      type: "message.added";
-      createdAt: string;
-      message: LLMMessage;
-    }
-  | {
-      type: "tool.started";
-      createdAt: string;
-      toolCall: ToolCall;
-      requiresApproval: boolean;
-    }
-  | {
-      type: "tool.finished";
-      createdAt: string;
-      toolCall: ToolCall;
-      result: ToolResult;
-    }
-  | {
-      type: "approval.requested";
-      createdAt: string;
-      request: ApprovalRequest;
-    }
-  | {
-      type: "approval.resolved";
-      createdAt: string;
-      requestId: string;
-      resolution: ApprovalResolution;
-      reason?: string;
-    }
-  | {
-      type: "task.updated";
-      createdAt: string;
-      task: InteractionTaskSnapshot;
-    }
-  | {
-      type: "session.changed";
-      createdAt: string;
-      summary: SessionSummary;
-    }
-  | {
-      type: "resume.loaded";
-      createdAt: string;
-      sessionId: string;
-      resumedFromInterrupted: boolean;
-      forkedFromSessionId?: string;
-    }
-  | {
-      type: "resume.catalog.updated";
-      createdAt: string;
-      catalog: ResumeCatalogSnapshot;
-    }
-  | {
-      type: "review.findings.ready";
-      createdAt: string;
-      findings: ReviewFinding[];
-    }
-  | {
-      type: "config.snapshot.updated";
-      createdAt: string;
-      snapshot: ConfigSnapshot;
-    }
-  | {
-      type: "config.validation.updated";
-      createdAt: string;
-      validation: ConfigValidationSnapshot;
-    }
-  | {
-      type: "mcp.health.updated";
-      createdAt: string;
-      servers: MCPHealthSnapshot[];
-    }
-  | {
-      type: "runtime.usage.updated";
-      createdAt: string;
-      runtime: RuntimeUsageSnapshot;
-    };
+/**
+ * 事件的 agent 归属。
+ *
+ * 缺省（全部字段为 undefined）表示事件来自主 agent。子 agent 的事件带上自己的
+ * agentId，消费端据此决定是否渲染进主时间线、以及 session 变更是否该重置 UI。
+ *
+ * 本期串行执行，归属信息用不上排序；但字段必须此时就位——事后补要动所有 emit
+ * 点，成本差一个数量级。
+ */
+export interface InteractionAgentScope {
+  /** 子 agent 的运行实例 id，主 agent 事件不带 */
+  agentId?: string;
+  /** 派生该子 agent 的父级 id，顶层子 agent 不带 */
+  parentAgentId?: string;
+  /** agent 定义名，用于 UI 展示 */
+  agentName?: string;
+}
+
+/** 判断事件是否来自主 agent */
+export function isMainAgentEvent(event: { agentId?: string }): boolean {
+  return event.agentId === undefined;
+}
+
+export type InteractionEvent = InteractionAgentScope &
+  (
+    | {
+        type: "message.added";
+        createdAt: string;
+        message: LLMMessage;
+      }
+    | {
+        type: "tool.started";
+        createdAt: string;
+        toolCall: ToolCall;
+        requiresApproval: boolean;
+      }
+    | {
+        type: "tool.finished";
+        createdAt: string;
+        toolCall: ToolCall;
+        result: ToolResult;
+      }
+    | {
+        type: "approval.requested";
+        createdAt: string;
+        request: ApprovalRequest;
+      }
+    | {
+        type: "approval.resolved";
+        createdAt: string;
+        requestId: string;
+        resolution: ApprovalResolution;
+        reason?: string;
+      }
+    | {
+        type: "task.updated";
+        createdAt: string;
+        task: InteractionTaskSnapshot;
+      }
+    | {
+        type: "session.changed";
+        createdAt: string;
+        summary: SessionSummary;
+      }
+    | {
+        type: "resume.loaded";
+        createdAt: string;
+        sessionId: string;
+        resumedFromInterrupted: boolean;
+        forkedFromSessionId?: string;
+      }
+    | {
+        type: "resume.catalog.updated";
+        createdAt: string;
+        catalog: ResumeCatalogSnapshot;
+      }
+    | {
+        type: "review.findings.ready";
+        createdAt: string;
+        findings: ReviewFinding[];
+      }
+    | {
+        type: "config.snapshot.updated";
+        createdAt: string;
+        snapshot: ConfigSnapshot;
+      }
+    | {
+        type: "config.validation.updated";
+        createdAt: string;
+        validation: ConfigValidationSnapshot;
+      }
+    | {
+        type: "mcp.health.updated";
+        createdAt: string;
+        servers: MCPHealthSnapshot[];
+      }
+    | {
+        type: "runtime.usage.updated";
+        createdAt: string;
+        runtime: RuntimeUsageSnapshot;
+      }
+  );
 
 export type InteractionEventType = InteractionEvent["type"];
 

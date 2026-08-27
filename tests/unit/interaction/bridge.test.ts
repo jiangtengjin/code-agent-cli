@@ -74,4 +74,51 @@ describe("InteractionEventBridge", () => {
       forkedFromSessionId: "session-0",
     });
   });
+
+  it("omits agent scope fields for the main agent", () => {
+    const emit = vi.fn((event) => event);
+    const bridge = new InteractionEventBridge({ emit }, () => "2026-08-27T10:00:00.000Z");
+
+    bridge.messageAdded({ role: "user", content: "hi" });
+
+    expect(emit.mock.calls[0][0]).not.toHaveProperty("agentId");
+  });
+
+  it("stamps agent scope on every event emitted through a derived bridge", () => {
+    const emit = vi.fn((event) => event);
+    const bridge = new InteractionEventBridge(
+      { emit },
+      () => "2026-08-27T10:00:00.000Z",
+    ).forAgent({
+      agentId: "agent-1",
+      parentAgentId: "main",
+      agentName: "code-explorer",
+    });
+    const toolCall = { id: "tool-1", name: "grep_search", args: { pattern: "x" } };
+
+    bridge.messageAdded({ role: "assistant", content: "found" });
+    bridge.toolStarted(toolCall, false);
+    bridge.taskUpdated({ id: "agent-1", title: "search", status: "running" });
+
+    for (const [event] of emit.mock.calls) {
+      expect(event).toMatchObject({
+        agentId: "agent-1",
+        parentAgentId: "main",
+        agentName: "code-explorer",
+      });
+    }
+  });
+
+  it("shares the sink with the parent bridge so a single emitter sees both", () => {
+    const emit = vi.fn((event) => event);
+    const parent = new InteractionEventBridge({ emit }, () => "2026-08-27T10:00:00.000Z");
+    const child = parent.forAgent({ agentId: "agent-1" });
+
+    parent.messageAdded({ role: "user", content: "parent" });
+    child.messageAdded({ role: "assistant", content: "child" });
+
+    expect(emit).toHaveBeenCalledTimes(2);
+    expect(emit.mock.calls[0][0].agentId).toBeUndefined();
+    expect(emit.mock.calls[1][0].agentId).toBe("agent-1");
+  });
 });

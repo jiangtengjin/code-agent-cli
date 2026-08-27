@@ -1,4 +1,4 @@
-import type { InteractionEvent } from "../../interaction/events.js";
+import { type InteractionEvent, isMainAgentEvent } from "../../interaction/events.js";
 import type { LLMContentPart } from "../../types/provider.js";
 import type { ShellAction } from "./actions.js";
 import {
@@ -146,6 +146,13 @@ function upsertTask(
 function reduceInteractionEvent(state: ShellState, event: InteractionEvent): ShellState {
   switch (event.type) {
     case "message.added":
+      // 子 agent 的消息与工具调用不进主时间线——这正是上下文隔离的收益所在：
+      // 主界面看到的应与主 agent 上下文里看到的一致。子 agent 的进展通过
+      // task.updated 折叠成一行呈现。
+      if (!isMainAgentEvent(event)) {
+        return state;
+      }
+
       return {
         ...state,
         chat: {
@@ -156,6 +163,10 @@ function reduceInteractionEvent(state: ShellState, event: InteractionEvent): She
       };
     case "tool.started":
     case "tool.finished":
+      if (!isMainAgentEvent(event)) {
+        return state;
+      }
+
       return {
         ...state,
         chat: {
@@ -180,6 +191,12 @@ function reduceInteractionEvent(state: ShellState, event: InteractionEvent): She
         lastEventAt: event.createdAt,
       };
     case "session.changed":
+      // 子 agent 有自己的 session，其变更与主界面无关：既不该重置 chat，也不该
+      // 顶替 currentSession。整个分支对子 agent 事件不做处理。
+      if (!isMainAgentEvent(event)) {
+        return state;
+      }
+
       if (state.currentSession?.id !== undefined && state.currentSession.id !== event.summary.id) {
         return {
           ...state,

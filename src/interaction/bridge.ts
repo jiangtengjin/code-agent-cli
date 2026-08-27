@@ -7,6 +7,7 @@ import type {
   ApprovalResolution,
   ConfigSnapshot,
   ConfigValidationSnapshot,
+  InteractionAgentScope,
   InteractionTaskSnapshot,
   MCPHealthSnapshot,
   ResumeCatalogSnapshot,
@@ -21,13 +22,26 @@ export class InteractionEventBridge {
   constructor(
     private readonly sink: InteractionEventSink,
     private readonly now: () => string = () => new Date().toISOString(),
+    /**
+     * 事件的 agent 归属。
+     *
+     * 主 agent 用默认的空 scope；子 agent 用 forAgent() 派生一个带自身 id 的
+     * bridge，从而无需给 14 个方法逐个加参数。
+     */
+    private readonly scope: InteractionAgentScope = {},
   ) {}
+
+  /** 派生一个把事件标记为指定子 agent 的 bridge，共享同一个 sink */
+  forAgent(scope: InteractionAgentScope): InteractionEventBridge {
+    return new InteractionEventBridge(this.sink, this.now, scope);
+  }
 
   messageAdded(message: LLMMessage) {
     return this.sink.emit(
       createInteractionEvent(
         "message.added",
         {
+          ...this.scope,
           message,
         },
         this.now(),
@@ -40,6 +54,7 @@ export class InteractionEventBridge {
       createInteractionEvent(
         "tool.started",
         {
+          ...this.scope,
           toolCall,
           requiresApproval,
         },
@@ -53,6 +68,7 @@ export class InteractionEventBridge {
       createInteractionEvent(
         "tool.finished",
         {
+          ...this.scope,
           toolCall,
           result,
         },
@@ -66,6 +82,7 @@ export class InteractionEventBridge {
       createInteractionEvent(
         "approval.requested",
         {
+          ...this.scope,
           request,
         },
         this.now(),
@@ -78,6 +95,7 @@ export class InteractionEventBridge {
       createInteractionEvent(
         "approval.resolved",
         {
+          ...this.scope,
           requestId,
           resolution,
           reason,
@@ -92,6 +110,7 @@ export class InteractionEventBridge {
       createInteractionEvent(
         "task.updated",
         {
+          ...this.scope,
           task,
         },
         this.now(),
@@ -104,6 +123,7 @@ export class InteractionEventBridge {
       createInteractionEvent(
         "session.changed",
         {
+          ...this.scope,
           summary,
         },
         this.now(),
@@ -122,6 +142,7 @@ export class InteractionEventBridge {
       createInteractionEvent(
         "resume.loaded",
         {
+          ...this.scope,
           sessionId,
           ...options,
         },
@@ -135,6 +156,7 @@ export class InteractionEventBridge {
       createInteractionEvent(
         "resume.catalog.updated",
         {
+          ...this.scope,
           catalog,
         },
         this.now(),
@@ -147,6 +169,7 @@ export class InteractionEventBridge {
       createInteractionEvent(
         "review.findings.ready",
         {
+          ...this.scope,
           findings,
         },
         this.now(),
@@ -159,6 +182,7 @@ export class InteractionEventBridge {
       createInteractionEvent(
         "config.snapshot.updated",
         {
+          ...this.scope,
           snapshot,
         },
         this.now(),
@@ -171,6 +195,7 @@ export class InteractionEventBridge {
       createInteractionEvent(
         "config.validation.updated",
         {
+          ...this.scope,
           validation,
         },
         this.now(),
@@ -183,6 +208,7 @@ export class InteractionEventBridge {
       createInteractionEvent(
         "mcp.health.updated",
         {
+          ...this.scope,
           servers,
         },
         this.now(),
@@ -195,6 +221,7 @@ export class InteractionEventBridge {
       createInteractionEvent(
         "runtime.usage.updated",
         {
+          ...this.scope,
           runtime,
         },
         this.now(),
