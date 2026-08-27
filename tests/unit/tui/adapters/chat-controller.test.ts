@@ -631,4 +631,44 @@ describe("createTUIChatController", () => {
     const exposed = chat.mock.calls[0][0].tools ?? [];
     expect(exposed.map((entry: { name: string }) => entry.name)).not.toContain("spawn_agent");
   });
+
+  it("accepts Chinese plan approval and rejection keywords", async () => {
+    // 这两组关键词曾因编码损坏失效（GBK 误读），且无测试覆盖，故长期潜伏。
+    // 用中文「取消」走一遍拒绝分支，防止再次回归。
+    const emitter = new InteractionEventEmitter();
+    const store = createShellStore({ emitter });
+    const chat = vi.fn(async () => ({
+      content: "PLAN\n1. 改造 registry",
+      model: "deepseek-chat",
+    }));
+
+    const controller = createTUIChatController(
+      { ...config, mode: "plan" },
+      {
+        eventEmitter: emitter,
+        provider: { name: "test-provider", chat },
+        toolRegistry: new ToolRegistry(),
+        agentDefinitions: [],
+        resolveWorkspace: async () => ({ key: "workspace-a", path: "D:/JAVA/code-agent-cli" }),
+        createTaskId: () => "task-plan",
+        createSessionId: () => "session-plan",
+        now: () => "2026-08-27T13:00:00.000Z",
+      },
+    );
+
+    // 第一轮产出待审批计划
+    await controller.submitTask("重构 registry");
+    expect(store.getState().currentSession?.status).toBe("awaiting_plan_approval");
+
+    const callsBeforeCancel = chat.mock.calls.length;
+
+    // 中文「取消」应命中拒绝分支：不再调用 provider，且状态回到 idle
+    const result = await controller.submitTask("取消");
+
+    expect(result.detail).toBe("Plan cancelled.");
+    expect(chat).toHaveBeenCalledTimes(callsBeforeCancel);
+    expect(store.getState().currentSession?.status).toBe("idle");
+
+    store.dispose();
+  });
 });

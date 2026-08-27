@@ -112,8 +112,8 @@ export interface TUIChatControllerDependencies {
   reviewScanner?: ReviewScanner;
 }
 
-const PLAN_APPROVAL_INPUTS = new Set(["y", "yes", "纭", "鎵ц", "缁х画"]);
-const PLAN_REJECT_INPUTS = new Set(["n", "no", "鍙栨秷", "鍋滄"]);
+const PLAN_APPROVAL_INPUTS = new Set(["y", "yes", "确认", "执行", "继续"]);
+const PLAN_REJECT_INPUTS = new Set(["n", "no", "取消", "停止"]);
 const MODE_NAMES: ChatMode[] = ["normal", "auto", "plan", "edit"];
 
 function getErrorMessage(error: unknown): string {
