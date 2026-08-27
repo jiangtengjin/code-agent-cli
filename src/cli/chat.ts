@@ -29,6 +29,7 @@ import type { LLMMessage, LLMToolCall, LLMUsage } from "../types/provider.js";
 import type { SessionState, SessionSummary } from "../types/session.js";
 import type { ToolResult } from "../types/tool.js";
 import { maskApiKey } from "../utils/api-key.js";
+import { isAbortError } from "../utils/error.js";
 import { formatDuration } from "../utils/format.js";
 import { isSensitivePath } from "../utils/security.js";
 
@@ -660,14 +661,6 @@ type ResolvedSessionLoadResult = {
   resumedFromInterrupted: boolean;
   forkedFromTitle?: string;
 };
-
-function isAbortError(error: unknown): boolean {
-  if (error instanceof Error) {
-    return error.name === "AbortError";
-  }
-
-  return false;
-}
 
 function normalizeInterruptedSession(state: SessionState): ResolvedSessionLoadResult {
   if (state.status !== "interrupted") {

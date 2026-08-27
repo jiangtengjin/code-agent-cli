@@ -2,6 +2,7 @@ import { parse } from "jsonc-parser";
 import { runExecutionLoop } from "../session/execution.js";
 import type { PlanState } from "../types/plan.js";
 import type { LLMResponse } from "../types/provider.js";
+import { isAbortError } from "../utils/error.js";
 import type { ModeHandler, ModeRunResult, RunContext } from "./handler.js";
 
 type ParsedPlanResponse = {
@@ -276,14 +277,6 @@ function parsePlanResponse(response: LLMResponse, originalTask: string): PlanSta
       status: "pending" as const,
     })),
   };
-}
-
-function isAbortError(error: unknown): boolean {
-  if (error instanceof Error) {
-    return error.name === "AbortError";
-  }
-
-  return false;
 }
 
 export function formatPlanState(plan: PlanState): string {
