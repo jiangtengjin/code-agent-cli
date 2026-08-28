@@ -73,6 +73,25 @@ describe("ConfigSchema 验证", () => {
     expect(result.success).toBe(true);
   });
 
+  it("应接受 costGuard.pricing 自定义价格", () => {
+    const result = ConfigSchema.safeParse({
+      costGuard: {
+        monthlyBudget: 100,
+        pricing: {
+          "glm-5.3": { inputPerMillion: 6, outputPerMillion: 18, currency: "¥" },
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("应拒绝负数的模型价格", () => {
+    const result = ConfigSchema.safeParse({
+      costGuard: { pricing: { "glm-5.3": { inputPerMillion: -1, outputPerMillion: 18 } } },
+    });
+    expect(result.success).toBe(false);
+  });
+
   it("应接受 agents 配置块", () => {
     const result = ConfigSchema.safeParse({
       agents: { enabled: true, maxConcurrency: 1 },

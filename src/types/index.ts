@@ -11,6 +11,7 @@ export type {
   RAGConfig,
   TerminalConfig,
   CostGuardConfig,
+  ModelPricingConfig,
   SessionsConfig,
   AgentsConfig,
 } from "./config.js";

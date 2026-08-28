@@ -195,3 +195,83 @@ describe("CostTracker", () => {
     });
   });
 });
+
+describe("CostTracker 未收录模型的处理", () => {
+  const usage = { promptTokens: 1000, completionTokens: 500, totalTokens: 1500 };
+
+  it("未知模型仍累计 token，而非静默丢弃", () => {
+    // 此前 record() 遇未知模型直接 return，导致 /status 显示 0 用量，
+    // 用户误以为没花钱
+    const tracker = new CostTracker();
+
+    tracker.record("glm-5.3", usage);
+
+    expect(tracker.snapshot().byModel["glm-5.3"]).toMatchObject({
+      promptTokens: 1000,
+      completionTokens: 500,
+      totalTokens: 1500,
+      cost: 0,
+    });
+  });
+
+  it("首次遇到未收录模型时告警一次", () => {
+    const tracker = new CostTracker();
+
+    const first = tracker.record("glm-5.3", usage);
+    const second = tracker.record("glm-5.3", usage);
+
+    expect(first).toContain("glm-5.3");
+    expect(first).toContain("无法估算");
+    expect(second).toBeUndefined();
+  });
+
+  it("配了预算时明确告知预算告警对该模型不生效", () => {
+    const withBudget = new CostTracker({ monthlyBudget: 100, warnAtPercent: 80 });
+    const withoutBudget = new CostTracker();
+
+    expect(withBudget.record("glm-5.3", usage)).toContain("预算告警对该模型不生效");
+    expect(withoutBudget.record("glm-5.3", usage)).not.toContain("预算告警");
+  });
+
+  it("每个未收录模型各告警一次", () => {
+    const tracker = new CostTracker();
+
+    expect(tracker.record("glm-5.3", usage)).toContain("glm-5.3");
+    expect(tracker.record("glm-5.2", usage)).toContain("glm-5.2");
+    expect(tracker.record("glm-5.3", usage)).toBeUndefined();
+    expect(tracker.hasUnpricedModels()).toBe(true);
+  });
+
+  it("未收录模型不影响已收录模型的费用计算", () => {
+    const tracker = new CostTracker();
+
+    tracker.record("glm-5.3", usage);
+    tracker.record("deepseek-v4-flash", usage);
+
+    const snapshot = tracker.snapshot();
+    expect(snapshot.byModel["glm-5.3"].cost).toBe(0);
+    expect(snapshot.byModel["deepseek-v4-flash"].cost).toBeGreaterThan(0);
+    expect(snapshot.totalCost).toBe(snapshot.byModel["deepseek-v4-flash"].cost);
+  });
+
+  it("用户自定义价格可覆盖并使新模型正常计费", () => {
+    const tracker = new CostTracker({
+      pricing: { "glm-5.3": { inputPerMillion: 6, outputPerMillion: 18, currency: "¥" } },
+    });
+
+    const warning = tracker.record("glm-5.3", usage);
+
+    expect(warning).toBeUndefined();
+    expect(tracker.hasUnpricedModels()).toBe(false);
+    // 1000/1e6*6 + 500/1e6*18 = 0.015
+    expect(tracker.snapshot().byModel["glm-5.3"].cost).toBeCloseTo(0.015, 6);
+  });
+
+  it("没有 usage 时不产生任何记录", () => {
+    const tracker = new CostTracker();
+
+    expect(tracker.record("glm-5.3", undefined)).toBeUndefined();
+    expect(tracker.snapshot().byModel).toEqual({});
+    expect(tracker.hasUnpricedModels()).toBe(false);
+  });
+});

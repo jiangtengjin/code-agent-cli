@@ -37,9 +37,16 @@ export const TerminalConfigSchema = z.object({
   timeout: z.number().int().positive("超时时间必须大于 0").optional(),
 });
 
+export const ModelPricingConfigSchema = z.object({
+  inputPerMillion: z.number().nonnegative("输入价格不能为负"),
+  outputPerMillion: z.number().nonnegative("输出价格不能为负"),
+  currency: z.string().min(1).optional(),
+});
+
 export const CostGuardConfigSchema = z.object({
   monthlyBudget: z.number().positive("月预算必须大于 0").optional(),
   warnAtPercent: z.number().min(1, "告警阈值至少为 1").max(100, "告警阈值不能超过 100").optional(),
+  pricing: z.record(ModelPricingConfigSchema).optional(),
 });
 
 export const SessionsConfigSchema = z.object({

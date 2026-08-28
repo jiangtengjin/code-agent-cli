@@ -56,12 +56,26 @@ export interface TerminalConfig {
   timeout?: number;
 }
 
+/** 单个模型的价格，单位为每百万 token */
+export interface ModelPricingConfig {
+  inputPerMillion: number;
+  outputPerMillion: number;
+  currency?: string;
+}
+
 /** 费用守卫配置 */
 export interface CostGuardConfig {
   /** 月预算上限（美元） */
   monthlyBudget?: number;
   /** 达到预算百分比时告警 */
   warnAtPercent?: number;
+  /**
+   * 自定义模型价格，按模型名索引，覆盖内置价格表。
+   *
+   * 内置表必然滞后于厂商发布，且 /models 端点不返回价格信息，因此新模型的
+   * 价格只能由用户在此补充；未配置时 token 仍会累计，但费用无法估算。
+   */
+  pricing?: Record<string, ModelPricingConfig>;
 }
 
 /** 会话持久化配置 */
