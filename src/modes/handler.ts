@@ -27,6 +27,8 @@ export interface RunContext {
   toolRegistry: ToolRegistry;
   messages: LLMMessage[];
   config: Config;
+  /** 覆盖 config.systemPrompt，供 agent 定制 prompt */
+  systemPrompt?: string;
   usageTracker: UsageTracker;
   costTracker?: CostTracker;
   timing: TaskTimingStats;

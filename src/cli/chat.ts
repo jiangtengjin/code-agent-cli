@@ -2,9 +2,19 @@ import { randomUUID } from "node:crypto";
 import * as readline from "node:readline";
 import chalk from "chalk";
 import ora from "ora";
+import { loadAgentDefinitions } from "../agents/loader.js";
+import { createSpawnAgentTool } from "../agents/spawn.js";
+import { InteractionEventBridge } from "../interaction/bridge.js";
+import { InteractionEventEmitter } from "../interaction/emitter.js";
+import {
+  createConfirmToolCallWithInteraction,
+  createTrackedMessagesHandler,
+  toToolCall,
+} from "../interaction/runtime.js";
 import { CostTracker, formatCostSnapshot } from "../llm/cost-tracker.js";
 import type { LLMProvider } from "../llm/provider.js";
 import { createProviderFromConfig } from "../llm/registry.js";
+import type { RunContext } from "../modes/handler.js";
 import { executeApprovedPlan, formatPlanState } from "../modes/plan.js";
 import { ModeRouter } from "../modes/router.js";
 import { createTaskTiming, formatTaskTiming } from "../session/execution.js";
@@ -15,6 +25,7 @@ import { UsageTracker, formatUsageSnapshot } from "../session/usage.js";
 import { resolveWorkspace } from "../session/workspace.js";
 import { createDefaultToolRegistry } from "../tools/built-in/index.js";
 import { MCPServerManager, type MCPSummary } from "../tools/mcp/manager.js";
+import type { ToolRegistry } from "../tools/registry.js";
 import type { Config } from "../types/config.js";
 import type { ChatMode } from "../types/mode.js";
 import type { PlanState } from "../types/plan.js";
@@ -22,6 +33,7 @@ import type { LLMMessage, LLMToolCall, LLMUsage } from "../types/provider.js";
 import type { SessionState, SessionSummary } from "../types/session.js";
 import type { ToolResult } from "../types/tool.js";
 import { maskApiKey } from "../utils/api-key.js";
+import { isAbortError } from "../utils/error.js";
 import { formatDuration } from "../utils/format.js";
 import { isSensitivePath } from "../utils/security.js";
 
@@ -403,6 +415,7 @@ async function handleSlashCommand(
     costTracker: CostTracker;
     setMode: (m: ChatMode) => void;
     clearPendingPlan?: () => void;
+    onMessagesCleared?: () => Promise<void> | void;
     onSessionUpdated?: (reason?: string) => Promise<void> | void;
     showSession?: () => Promise<void> | void;
     resumeSession?: (query?: string) => Promise<void> | void;
@@ -452,6 +465,7 @@ ${chalk.bold("可用命令:")}
     case "clear":
       ctx.messages.length = 0;
       ctx.clearPendingPlan?.();
+      await ctx.onMessagesCleared?.();
       await ctx.onSessionUpdated?.("clear");
       console.log(chalk.green("对话历史已清空"));
       break;
@@ -580,6 +594,10 @@ function userConfirm(toolCall: LLMToolCall, rl: readline.Interface): Promise<boo
   });
 }
 
+function createInteractionBridge(): InteractionEventBridge {
+  return new InteractionEventBridge(new InteractionEventEmitter());
+}
+
 const CHAT_PROMPT = chalk.dim("│ ") + chalk.cyan("❯ ");
 const SUGGESTION_LIMIT = 6;
 
@@ -648,14 +666,6 @@ type ResolvedSessionLoadResult = {
   forkedFromTitle?: string;
 };
 
-function isAbortError(error: unknown): boolean {
-  if (error instanceof Error) {
-    return error.name === "AbortError";
-  }
-
-  return false;
-}
-
 function normalizeInterruptedSession(state: SessionState): ResolvedSessionLoadResult {
   if (state.status !== "interrupted") {
     return {
@@ -704,10 +714,7 @@ function askQuestion(rl: readline.Interface, question: string): Promise<string> 
   });
 }
 
-async function forkLoadedSession(
-  store: SessionStore,
-  source: SessionState,
-): Promise<SessionState> {
+async function forkLoadedSession(store: SessionStore, source: SessionState): Promise<SessionState> {
   const now = new Date().toISOString();
   const forked = forkSessionState(source, {
     sessionId: randomUUID(),
@@ -796,6 +803,50 @@ async function loadInitialSession(
   return resolveSessionSummaryState(store, summary, options);
 }
 
+/**
+ * 给 CLI 路径注册 spawn_agent。
+ *
+ * CLI 的 runContext 与 spinner 都在每轮循环内才成型，因此依赖以 getter 传入。
+ * 无可委派 agent 或配置关闭时不注册。
+ */
+function registerSpawnAgentToolForCli(
+  toolRegistry: ToolRegistry,
+  config: Config,
+  getRunContext: () => RunContext | undefined,
+  setProgressText: (text: string) => void,
+): void {
+  if (config.agents?.enabled === false) {
+    return;
+  }
+
+  const definitions = loadAgentDefinitions(process.cwd());
+  if (definitions.length === 0) {
+    return;
+  }
+
+  toolRegistry.register(
+    createSpawnAgentTool({
+      definitions,
+      parentContext: () => {
+        const context = getRunContext();
+        if (!context) {
+          throw new Error("spawn_agent 只能在任务执行期间调用");
+        }
+        return context;
+      },
+      onAgentStart: (_agentId, definition) => {
+        setProgressText(`${definition.name} working...`);
+      },
+      onAgentProgress: (_agentId, detail) => {
+        setProgressText(`${detail}...`);
+      },
+      onAgentFinish: () => {
+        setProgressText("AI thinking...");
+      },
+    }),
+  );
+}
+
 export async function runPrompt(config: Config, prompt: string): Promise<void> {
   const provider = createProviderOrExit(config);
   if (!provider) {
@@ -812,8 +863,9 @@ export async function runPrompt(config: Config, prompt: string): Promise<void> {
   const usageTracker = new UsageTracker();
   const costTracker = new CostTracker(config.costGuard);
   const modeRouter = new ModeRouter();
-  let mode: ChatMode = (config.mode as ChatMode) ?? "normal";
+  const mode: ChatMode = (config.mode as ChatMode) ?? "normal";
   let pendingPlan: PlanState | undefined;
+  const interaction = createInteractionBridge();
   const handler = modeRouter.getHandler(mode);
   const persistence = new SessionPersistence({
     enabled: config.sessions?.enabled !== false,
@@ -825,6 +877,11 @@ export async function runPrompt(config: Config, prompt: string): Promise<void> {
     getMessages: () => messages,
     getPendingPlan: () => pendingPlan,
   });
+  const trackedMessages = createTrackedMessagesHandler(
+    interaction,
+    (nextMessages: LLMMessage[]) => persistence.handleMessagesChanged(nextMessages),
+    messages.length,
+  );
 
   try {
     await persistence.initialize();
@@ -840,18 +897,30 @@ export async function runPrompt(config: Config, prompt: string): Promise<void> {
       costTracker,
       timing,
       skipConfirm: Boolean(config.yolo),
-      confirmToolCall: async () => false,
-      onMessagesChanged: (nextMessages: LLMMessage[]) => persistence.handleMessagesChanged(nextMessages),
+      confirmToolCall: createConfirmToolCallWithInteraction(interaction, async () => false),
+      onMessagesChanged: (nextMessages: LLMMessage[]) =>
+        trackedMessages.handleMessagesChanged(nextMessages),
       onPlanStateChanged: (plan?: PlanState) => persistence.handlePlanStateChanged(plan),
-      onStatusChanged: (status: "idle" | "running" | "awaiting_plan_approval" | "interrupted" | "archived", reason?: string) =>
-        persistence.updateStatus(status, reason),
+      onStatusChanged: (
+        status: "idle" | "running" | "awaiting_plan_approval" | "interrupted" | "archived",
+        reason?: string,
+      ) => persistence.updateStatus(status, reason),
       output: {
         onAssistantMessage: (content: string) => {
           console.log(content);
         },
         onTokenUsage: printTokenUsage,
-        onToolStart: printToolStart,
-        onToolResult: printToolResult,
+        onToolStart: (toolCall: LLMToolCall) => {
+          interaction.toolStarted(
+            toToolCall(toolCall),
+            Boolean(toolRegistry.get(toolCall.name)?.requiresConfirm),
+          );
+          printToolStart(toolCall);
+        },
+        onToolResult: (toolCall: LLMToolCall, result: ToolResult, elapsedMs: number) => {
+          interaction.toolFinished(toToolCall(toolCall), result);
+          printToolResult(toolCall, result, elapsedMs);
+        },
         onWarning: (message: string) => {
           console.log(chalk.yellow(`\n${message}`));
         },
@@ -870,7 +939,7 @@ export async function runPrompt(config: Config, prompt: string): Promise<void> {
           {
             ...runContext,
             skipConfirm: true,
-            confirmToolCall: async () => true,
+            confirmToolCall: createConfirmToolCallWithInteraction(interaction, async () => true),
           },
           handler.maxIterations,
         );
@@ -895,10 +964,7 @@ export async function runPrompt(config: Config, prompt: string): Promise<void> {
   console.log(chalk.gray(formatTaskTiming(timing)));
 }
 
-export async function startChat(
-  config: Config,
-  options: StartChatOptions = {},
-): Promise<void> {
+export async function startChat(config: Config, options: StartChatOptions = {}): Promise<void> {
   if (!config.model?.apiKey && !config.models && config.model?.provider !== "ollama") {
     console.error(chalk.red("API Key 未配置。请运行 code-agent init 初始化配置。"));
     process.exit(1);
@@ -915,14 +981,28 @@ export async function startChat(
       console.log(chalk.yellow(message));
     },
   });
+  // spawn_agent 与 spinner 都在每轮循环内才成型，故用可变引用桥接
+  let activeRunContext: RunContext | undefined;
+  let activeSpinner: { text: string } | undefined;
+  registerSpawnAgentToolForCli(
+    toolRegistry,
+    config,
+    () => activeRunContext,
+    (text) => {
+      if (activeSpinner) {
+        activeSpinner.text = text;
+      }
+    },
+  );
   const initialSessionLoad = await loadInitialSession(config, options);
   const initialSession = initialSessionLoad?.session;
   const messages: LLMMessage[] = initialSession ? [...initialSession.messages] : [];
   const usageTracker = new UsageTracker(initialSession?.usage);
   const costTracker = new CostTracker(config.costGuard, initialSession?.cost);
   const modeRouter = new ModeRouter();
-  let mode: ChatMode = initialSession?.mode ?? ((config.mode as ChatMode) ?? "normal");
+  let mode: ChatMode = initialSession?.mode ?? (config.mode as ChatMode) ?? "normal";
   let pendingPlan: PlanState | undefined = initialSession?.pendingPlan;
+  const interaction = createInteractionBridge();
   const sessionStore =
     config.sessions?.enabled !== false && config.sessions?.storePath
       ? new SessionStore(config.sessions.storePath)
@@ -937,6 +1017,11 @@ export async function startChat(
     getMessages: () => messages,
     getPendingPlan: () => pendingPlan,
   });
+  const trackedMessages = createTrackedMessagesHandler(
+    interaction,
+    (nextMessages: LLMMessage[]) => persistence.handleMessagesChanged(nextMessages),
+    messages.length,
+  );
   type KeypressListener = (str: string, key: { name?: string; ctrl?: boolean }) => void;
   const cleanupHooks: {
     clearSuggestionBlock?: () => void;
@@ -969,6 +1054,7 @@ export async function startChat(
     pendingPlan = undefined;
     usageTracker.reset();
     costTracker.reset();
+    trackedMessages.setTrackedCount(0);
   }
 
   function applySessionState(state: SessionState): void {
@@ -978,6 +1064,8 @@ export async function startChat(
     usageTracker.restore(state.usage);
     costTracker.restore(state.cost);
     persistence.hydrate(state);
+    trackedMessages.setTrackedCount(state.messages.length);
+    interaction.sessionChanged(createSessionSummary(state));
   }
 
   function printSessionSummary(): void {
@@ -1013,6 +1101,10 @@ export async function startChat(
     }
 
     applySessionState(resolved.session);
+    interaction.resumeLoaded(resolved.session.sessionId, {
+      resumedFromInterrupted: resolved.resumedFromInterrupted,
+      forkedFromSessionId: resolved.session.parentSessionId,
+    });
 
     if (announce) {
       logResumedSession(summary.title);
@@ -1041,9 +1133,7 @@ export async function startChat(
     }
 
     printSessionList(sessions);
-    const answer = (
-      await askQuestion(rl, "请选择要恢复的会话编号（直接回车取消）：")
-    ).trim();
+    const answer = (await askQuestion(rl, "请选择要恢复的会话编号（直接回车取消）：")).trim();
 
     if (!answer) {
       console.log(chalk.yellow("已取消恢复会话"));
@@ -1065,6 +1155,10 @@ export async function startChat(
     }
 
     applySessionState(resolved.session);
+    interaction.resumeLoaded(resolved.session.sessionId, {
+      resumedFromInterrupted: resolved.resumedFromInterrupted,
+      forkedFromSessionId: resolved.session.parentSessionId,
+    });
     if (resolved.forkedFromTitle) {
       logForkedSession(resolved.forkedFromTitle);
     } else {
@@ -1257,6 +1351,12 @@ export async function startChat(
   }
   await mcpManager.startAll();
   await runSetup(() => displayWelcome(config, provider, mcpManager.getSummary()));
+  if (initialSessionLoad?.session) {
+    interaction.resumeLoaded(initialSessionLoad.session.sessionId, {
+      resumedFromInterrupted: initialSessionLoad.resumedFromInterrupted,
+      forkedFromSessionId: initialSessionLoad.session.parentSessionId,
+    });
+  }
 
   const rl = await runSetup(() =>
     readline.createInterface({
@@ -1502,6 +1602,9 @@ export async function startChat(
           clearPendingPlan: () => {
             pendingPlan = undefined;
           },
+          onMessagesCleared: () => {
+            trackedMessages.setTrackedCount(0);
+          },
           onSessionUpdated: (reason) => persistence.handleSessionUpdated(reason),
           showSession: () => printSessionSummary(),
           resumeSession: (query) => resumeSessionFromSlash(query),
@@ -1519,6 +1622,7 @@ export async function startChat(
 
       const timing = createTaskTiming();
       const spinner = ora({ text: "AI thinking...", color: "cyan" }).start();
+      activeSpinner = spinner;
       const handler = modeRouter.getHandler(mode);
       const abortController = new AbortController();
       activeRun = {
@@ -1538,11 +1642,17 @@ export async function startChat(
         timing,
         abortSignal: abortController.signal,
         skipConfirm: Boolean(config.yolo),
-        confirmToolCall: (toolCall: LLMToolCall) => userConfirm(toolCall, rl),
-        onMessagesChanged: (nextMessages: LLMMessage[]) => persistence.handleMessagesChanged(nextMessages),
+        confirmToolCall: createConfirmToolCallWithInteraction(
+          interaction,
+          (toolCall: LLMToolCall) => userConfirm(toolCall, rl),
+        ),
+        onMessagesChanged: (nextMessages: LLMMessage[]) =>
+          trackedMessages.handleMessagesChanged(nextMessages),
         onPlanStateChanged: (plan?: PlanState) => persistence.handlePlanStateChanged(plan),
-        onStatusChanged: (status: "idle" | "running" | "awaiting_plan_approval" | "interrupted" | "archived", reason?: string) =>
-          persistence.updateStatus(status, reason),
+        onStatusChanged: (
+          status: "idle" | "running" | "awaiting_plan_approval" | "interrupted" | "archived",
+          reason?: string,
+        ) => persistence.updateStatus(status, reason),
         output: {
           onIteration: (iteration: number) => {
             if (iteration > 1) {
@@ -1562,10 +1672,15 @@ export async function startChat(
           },
           onToolStart: (toolCall: LLMToolCall) => {
             spinner.stop();
+            interaction.toolStarted(
+              toToolCall(toolCall),
+              Boolean(toolRegistry.get(toolCall.name)?.requiresConfirm),
+            );
             printToolStart(toolCall);
           },
           onToolResult: (toolCall: LLMToolCall, result: ToolResult, elapsedMs: number) => {
             spinner.stop();
+            interaction.toolFinished(toToolCall(toolCall), result);
             printToolResult(toolCall, result, elapsedMs);
           },
           onWarning: (message: string) => {
@@ -1578,6 +1693,8 @@ export async function startChat(
           },
         },
       };
+
+      activeRunContext = runContext;
 
       try {
         if (mode === "plan" && pendingPlan) {
@@ -1619,6 +1736,8 @@ export async function startChat(
         }
       } finally {
         activeRun = undefined;
+        activeRunContext = undefined;
+        activeSpinner = undefined;
         spinner.stop();
       }
 

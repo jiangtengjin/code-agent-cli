@@ -287,7 +287,9 @@ describe("SessionStore", () => {
       mode: "plan",
       status: "interrupted",
     });
-    expect(restored?.messages).toEqual([{ role: "user", content: "Fix the flaky test failure in CI" }]);
+    expect(restored?.messages).toEqual([
+      { role: "user", content: "Fix the flaky test failure in CI" },
+    ]);
     expect(restored?.pendingPlan).toMatchObject({
       summary: "Plan summary",
     });

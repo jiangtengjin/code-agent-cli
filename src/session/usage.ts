@@ -33,6 +33,19 @@ export class UsageTracker {
     return { ...this.totals };
   }
 
+  /**
+   * 把另一份统计并入当前统计。
+   *
+   * 子 agent 用独立 tracker 计量，结束后并回父级，从而既能单独报告子任务开销，
+   * 又不丢失全局总量。
+   */
+  merge(snapshot: UsageSnapshot): void {
+    this.totals.promptTokens += snapshot.promptTokens;
+    this.totals.completionTokens += snapshot.completionTokens;
+    this.totals.totalTokens += snapshot.totalTokens;
+    this.totals.calls += snapshot.calls;
+  }
+
   restore(snapshot?: Partial<UsageSnapshot>): void {
     this.totals.promptTokens = snapshot?.promptTokens ?? 0;
     this.totals.completionTokens = snapshot?.completionTokens ?? 0;

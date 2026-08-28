@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { formatTokens, formatDuration, formatTime } from "../../src/utils/format.js";
+import { describe, expect, it } from "vitest";
+import { formatDuration, formatTime, formatTokens } from "../../src/utils/format.js";
 
 describe("formatTokens", () => {
   it("应格式化小于 1000 的数字", () => {

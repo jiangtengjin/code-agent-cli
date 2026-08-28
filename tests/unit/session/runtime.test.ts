@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createSessionState, createSessionSummary, forkSessionState } from "../../../src/session/runtime.js";
+import {
+  createSessionState,
+  createSessionSummary,
+  forkSessionState,
+} from "../../../src/session/runtime.js";
 import type { SessionState } from "../../../src/types/session.js";
 
 function buildState(overrides: Partial<SessionState> = {}): SessionState {

@@ -12,7 +12,9 @@ export type {
   TerminalConfig,
   CostGuardConfig,
   SessionsConfig,
+  AgentsConfig,
 } from "./config.js";
+export type { AgentDefinition, AgentSource } from "./agent.js";
 export type { ChatMode } from "./mode.js";
 export type {
   LLMMessage,

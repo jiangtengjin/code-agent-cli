@@ -58,11 +58,12 @@ function getDefaultModel(provider: string): string {
 }
 
 /** 根据厂商返回默认 API Base URL */
-function getDefaultBaseUrl(provider: string): string | undefined {
+export function getDefaultBaseUrlForProvider(provider: string): string | undefined {
   const urls: Record<string, string> = {
     deepseek: "https://api.deepseek.com/v1",
     qwen: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    glm: "https://open.bigmodel.cn/api/paas/v4",
+    // 与 provider-factory 保持一致：coding 端点走 code plan 套餐额度
+    glm: "https://open.bigmodel.cn/api/coding/paas/v4",
     ollama: "http://localhost:11434/v1",
   };
   return urls[provider];
@@ -122,7 +123,7 @@ export async function setupWizard(): Promise<void> {
     baseUrl = await promptInput(chalk.dim("输入 API Base URL: "));
   } else if (provider !== "ollama") {
     apiKey = await promptInput(chalk.dim("输入 API Key（留空则通过环境变量配置）: "));
-    baseUrl = getDefaultBaseUrl(provider);
+    baseUrl = getDefaultBaseUrlForProvider(provider);
   }
 
   // Step 3: 确认是否启用自主模式

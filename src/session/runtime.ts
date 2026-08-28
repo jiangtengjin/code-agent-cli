@@ -1,6 +1,6 @@
 import type { CostSnapshot } from "../llm/cost-tracker.js";
-import type { UsageSnapshot } from "./usage.js";
 import type { SessionState, SessionSummary } from "../types/session.js";
+import type { UsageSnapshot } from "./usage.js";
 
 type CreateSessionStateInput = {
   sessionId: string;
@@ -75,7 +75,10 @@ function getFirstUserMessage(state: SessionState): string {
   return firstUserMessage ? getTextContent(firstUserMessage.content) : "";
 }
 
-function getLatestMessagePreview(state: SessionState, role: "user" | "assistant"): string | undefined {
+function getLatestMessagePreview(
+  state: SessionState,
+  role: "user" | "assistant",
+): string | undefined {
   const message = [...state.messages].reverse().find((item) => item.role === role);
   const text = message ? getTextContent(message.content) : "";
   return text ? limitText(text, 80) : undefined;
@@ -131,10 +134,7 @@ export function createSessionSummary(state: SessionState): SessionSummary {
   };
 }
 
-export function forkSessionState(
-  parent: SessionState,
-  input: ForkSessionStateInput,
-): SessionState {
+export function forkSessionState(parent: SessionState, input: ForkSessionStateInput): SessionState {
   const now = input.now ?? nowIso();
 
   return {

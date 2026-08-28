@@ -77,11 +77,13 @@ describe("CostTracker", () => {
 
     expect(firstWarning).toBeUndefined();
     expect(secondWarning).toContain("预算");
-    expect(tracker.record("deepseek-coder", {
-      promptTokens: 1000,
-      completionTokens: 500,
-      totalTokens: 1500,
-    })).toBeUndefined();
+    expect(
+      tracker.record("deepseek-coder", {
+        promptTokens: 1000,
+        completionTokens: 500,
+        totalTokens: 1500,
+      }),
+    ).toBeUndefined();
   });
 
   it("formats a stable cost summary", () => {

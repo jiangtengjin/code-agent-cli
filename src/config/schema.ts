@@ -49,6 +49,11 @@ export const SessionsConfigSchema = z.object({
   includePromptSessions: z.boolean().optional(),
 });
 
+export const AgentsConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  maxConcurrency: z.number().int().positive("并发数必须大于 0").optional(),
+});
+
 export const ConfigSchema = z.object({
   $schema: z.string().optional(),
   model: LLMConfigSchema.optional(),
@@ -60,5 +65,6 @@ export const ConfigSchema = z.object({
   terminal: TerminalConfigSchema.optional(),
   costGuard: CostGuardConfigSchema.optional(),
   sessions: SessionsConfigSchema.optional(),
+  agents: AgentsConfigSchema.optional(),
   systemPrompt: z.string().optional(),
 });

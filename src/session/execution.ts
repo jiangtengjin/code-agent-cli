@@ -146,7 +146,7 @@ export async function runExecutionLoop(
     const response = await context.provider
       .chat({
         messages: [...context.messages],
-        systemPrompt: context.config.systemPrompt,
+        systemPrompt: context.systemPrompt ?? context.config.systemPrompt,
         tools: context.toolRegistry.getToolDefinitions(),
         signal: context.abortSignal,
       })

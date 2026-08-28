@@ -1,0 +1,334 @@
+import { describe, expect, it } from "vitest";
+import {
+  SHELL_SHORTCUT_HINTS,
+  type ShortcutContext,
+  dispatchShortcut,
+  isPrintableText,
+  normalizeKeyInput,
+} from "../../../../src/tui/shell/shortcuts.js";
+
+describe("normalizeKeyInput", () => {
+  it("recognizes the escape key", () => {
+    expect(normalizeKeyInput("\u001B")).toEqual({ kind: "escape" });
+  });
+
+  it("recognizes both carriage return and line feed as enter", () => {
+    expect(normalizeKeyInput("\r")).toEqual({ kind: "enter" });
+    expect(normalizeKeyInput("\n")).toEqual({ kind: "enter" });
+  });
+
+  it("recognizes the tab key", () => {
+    expect(normalizeKeyInput("\t")).toEqual({ kind: "tab" });
+  });
+
+  it("recognizes both backspace encodings", () => {
+    expect(normalizeKeyInput("\b")).toEqual({ kind: "backspace" });
+    expect(normalizeKeyInput("\u007F")).toEqual({ kind: "backspace" });
+  });
+
+  it("keeps printable ASCII text as a text token", () => {
+    expect(normalizeKeyInput("hello")).toEqual({ kind: "text", text: "hello" });
+    expect(normalizeKeyInput("/goto")).toEqual({ kind: "text", text: "/goto" });
+  });
+
+  it("keeps multi-byte CJK text instead of silently dropping it", () => {
+    expect(normalizeKeyInput("你好")).toEqual({ kind: "text", text: "你好" });
+    expect(normalizeKeyInput("统一 tui")).toEqual({ kind: "text", text: "统一 tui" });
+  });
+
+  it("recognizes arrow up key as up navigation", () => {
+    expect(normalizeKeyInput("\u001B[A")).toEqual({ kind: "arrow", direction: "up" });
+    expect(normalizeKeyInput("\u001BOA")).toEqual({ kind: "arrow", direction: "up" });
+  });
+
+  it("recognizes arrow down key as down navigation", () => {
+    expect(normalizeKeyInput("\u001B[B")).toEqual({ kind: "arrow", direction: "down" });
+    expect(normalizeKeyInput("\u001BOB")).toEqual({ kind: "arrow", direction: "down" });
+  });
+
+  it("recognizes Ctrl+. as the command palette trigger", () => {
+    expect(normalizeKeyInput("\u001E")).toEqual({ kind: "control", key: "." });
+  });
+
+  it("treats control characters that are not mapped keys as unknown", () => {
+    expect(normalizeKeyInput("\u0000")).toEqual({ kind: "unknown" });
+    expect(normalizeKeyInput("\u0001")).toEqual({ kind: "unknown" });
+  });
+
+  it("accepts buffers by decoding them as utf-8", () => {
+    const buffer = Buffer.from("你好", "utf8");
+    expect(normalizeKeyInput(buffer)).toEqual({ kind: "text", text: "你好" });
+  });
+});
+
+describe("isPrintableText", () => {
+  it("accepts ASCII text", () => {
+    expect(isPrintableText("hello")).toBe(true);
+  });
+
+  it("accepts mixed CJK and ASCII text", () => {
+    expect(isPrintableText("统一 shell")).toBe(true);
+  });
+
+  it("rejects control characters", () => {
+    expect(isPrintableText("\u0001")).toBe(false);
+    expect(isPrintableText("a\u0001b")).toBe(false);
+  });
+
+  it("rejects empty input", () => {
+    expect(isPrintableText("")).toBe(false);
+  });
+});
+
+describe("dispatchShortcut", () => {
+  const baseContext: ShortcutContext = {
+    draft: "",
+    hasComposer: true,
+  };
+
+  it("clears a non-empty draft on escape", () => {
+    expect(
+      dispatchShortcut(normalizeKeyInput("\u001B"), { ...baseContext, draft: "hello" }),
+    ).toEqual({
+      type: "clear-draft",
+    });
+  });
+
+  describe("layered escape", () => {
+    // Esc 是唯一的「返回」键，按由近到远的层级依次回退。
+    it("closes an open panel before touching the draft", () => {
+      expect(
+        dispatchShortcut(normalizeKeyInput("\u001B"), {
+          ...baseContext,
+          draft: "hello",
+          panelOpen: true,
+        }),
+      ).toEqual({ type: "close-panel" });
+    });
+
+    it("returns to the root scene once the draft is empty", () => {
+      expect(
+        dispatchShortcut(normalizeKeyInput("\u001B"), {
+          ...baseContext,
+          activeScene: "tasks",
+        }),
+      ).toEqual({ type: "scene-back" });
+    });
+
+    it("prefers clearing the draft over leaving a nested scene", () => {
+      expect(
+        dispatchShortcut(normalizeKeyInput("\u001B"), {
+          ...baseContext,
+          draft: "hello",
+          activeScene: "tasks",
+        }),
+      ).toEqual({ type: "clear-draft" });
+    });
+
+    it("is a noop at the root scene with an empty draft", () => {
+      expect(
+        dispatchShortcut(normalizeKeyInput("\u001B"), {
+          ...baseContext,
+          activeScene: "chat",
+        }),
+      ).toEqual({ type: "noop" });
+    });
+  });
+
+  describe("slash suggestions", () => {
+    const suggestionContext: ShortcutContext = {
+      draft: "/mo",
+      hasComposer: true,
+      suggestionCount: 3,
+    };
+
+    it("moves the highlight with arrow keys", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\u001B[B"), suggestionContext)).toEqual({
+        type: "suggestion-move",
+        direction: "down",
+      });
+      expect(dispatchShortcut(normalizeKeyInput("\u001B[A"), suggestionContext)).toEqual({
+        type: "suggestion-move",
+        direction: "up",
+      });
+    });
+
+    it("accepts the highlighted suggestion on tab", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\t"), suggestionContext)).toEqual({
+        type: "suggestion-accept",
+      });
+    });
+
+    it("falls back to prefix completion when no suggestions are visible", () => {
+      expect(
+        dispatchShortcut(normalizeKeyInput("\t"), { ...baseContext, draft: "/goto ch" }),
+      ).toEqual({ type: "complete", draft: "/goto ch" });
+    });
+
+    it("ignores arrow keys when no suggestions are visible", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\u001B[B"), baseContext)).toEqual({
+        type: "noop",
+      });
+    });
+  });
+
+  describe("when a panel is open", () => {
+    const panelContext: ShortcutContext = {
+      draft: "",
+      hasComposer: true,
+      panelOpen: true,
+    };
+
+    it("closes on enter as well as escape", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\r"), panelContext)).toEqual({
+        type: "close-panel",
+      });
+    });
+
+    it("swallows text input so the draft is not edited while reading", () => {
+      expect(dispatchShortcut(normalizeKeyInput("abc"), panelContext)).toEqual({ type: "noop" });
+    });
+  });
+
+  it("submits a non-empty draft on enter", () => {
+    expect(
+      dispatchShortcut(normalizeKeyInput("\r"), { ...baseContext, draft: "/goto chat" }),
+    ).toEqual({ type: "submit", draft: "/goto chat" });
+  });
+
+  it("ignores enter when the draft is empty", () => {
+    expect(dispatchShortcut(normalizeKeyInput("\r"), baseContext)).toEqual({ type: "noop" });
+  });
+
+  it("requests completion on tab when no suggestions are visible", () => {
+    expect(
+      dispatchShortcut(normalizeKeyInput("\t"), { ...baseContext, draft: "/goto ch" }),
+    ).toEqual({
+      type: "complete",
+      draft: "/goto ch",
+    });
+  });
+
+  it("deletes the last character on backspace", () => {
+    expect(dispatchShortcut(normalizeKeyInput("\b"), { ...baseContext, draft: "hello" })).toEqual({
+      type: "delete-char",
+    });
+  });
+
+  it("is a noop on backspace when the draft is empty", () => {
+    expect(dispatchShortcut(normalizeKeyInput("\b"), baseContext)).toEqual({ type: "noop" });
+  });
+
+  it("inserts printable text into the draft", () => {
+    expect(dispatchShortcut(normalizeKeyInput("tui"), baseContext)).toEqual({
+      type: "insert-char",
+      text: "tui",
+    });
+  });
+
+  it("inserts CJK text into the draft", () => {
+    expect(dispatchShortcut(normalizeKeyInput("你好"), baseContext)).toEqual({
+      type: "insert-char",
+      text: "你好",
+    });
+  });
+
+  it("is a noop for unknown control input", () => {
+    expect(dispatchShortcut(normalizeKeyInput("\u0001"), baseContext)).toEqual({ type: "noop" });
+  });
+
+  it("opens the command palette on Ctrl+.", () => {
+    expect(dispatchShortcut(normalizeKeyInput("\u001E"), baseContext)).toEqual({
+      type: "open-palette",
+    });
+  });
+
+  it("exposes shortcut hints for the composer", () => {
+    expect(SHELL_SHORTCUT_HINTS.length).toBeGreaterThan(0);
+    for (const hint of SHELL_SHORTCUT_HINTS) {
+      expect(typeof hint).toBe("string");
+    }
+  });
+
+  describe("when command palette is open", () => {
+    const paletteContext: ShortcutContext = {
+      draft: "",
+      paletteOpen: true,
+      paletteQuery: "",
+    };
+
+    it("routes Esc to close the palette", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\u001B"), paletteContext)).toEqual({
+        type: "palette-close",
+      });
+    });
+
+    it("routes Up arrow to move selection up", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\u001B[A"), paletteContext)).toEqual({
+        type: "palette-move",
+        direction: "up",
+      });
+    });
+
+    it("routes Down arrow to move selection down", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\u001B[B"), paletteContext)).toEqual({
+        type: "palette-move",
+        direction: "down",
+      });
+    });
+
+    it("routes Enter to submit current palette selection", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\r"), paletteContext)).toEqual({
+        type: "palette-submit",
+      });
+    });
+
+    it("routes text input to update palette query", () => {
+      expect(dispatchShortcut(normalizeKeyInput("cha"), paletteContext)).toEqual({
+        type: "palette-query",
+        query: "cha",
+      });
+    });
+
+    it("appends text input to existing palette query", () => {
+      expect(
+        dispatchShortcut(normalizeKeyInput("t"), { ...paletteContext, paletteQuery: "cha" }),
+      ).toEqual({
+        type: "palette-query",
+        query: "chat",
+      });
+    });
+
+    it("routes backspace to delete last query character", () => {
+      expect(
+        dispatchShortcut(normalizeKeyInput("\b"), { ...paletteContext, paletteQuery: "chat" }),
+      ).toEqual({
+        type: "palette-query",
+        query: "cha",
+      });
+    });
+
+    it("routes backspace to close palette when query is empty", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\b"), paletteContext)).toEqual({
+        type: "palette-close",
+      });
+    });
+
+    it("ignores other control keys when palette is open", () => {
+      // Tab should not trigger completion in palette mode
+      expect(dispatchShortcut(normalizeKeyInput("\t"), paletteContext)).toEqual({
+        type: "noop",
+      });
+      // Ctrl+. should not re-open palette
+      expect(dispatchShortcut(normalizeKeyInput("\u001E"), paletteContext)).toEqual({
+        type: "noop",
+      });
+    });
+
+    it("ignores unknown input when palette is open", () => {
+      expect(dispatchShortcut(normalizeKeyInput("\u0001"), paletteContext)).toEqual({
+        type: "noop",
+      });
+    });
+  });
+});

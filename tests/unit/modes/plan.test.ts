@@ -73,9 +73,7 @@ describe("PlanModeHandler", () => {
         { title: "实现认证模块", status: "pending" },
       ],
     });
-    expect(output.onAssistantMessage).toHaveBeenCalledWith(
-      expect.stringContaining("[PLAN]"),
-    );
+    expect(output.onAssistantMessage).toHaveBeenCalledWith(expect.stringContaining("[PLAN]"));
     expect(output.onTokenUsage).toHaveBeenCalledWith({
       promptTokens: 10,
       completionTokens: 20,
@@ -182,8 +180,10 @@ describe("PlanModeHandler", () => {
           status: "pending",
         },
         {
-          title: "Trace src/cli/commands.ts and src/cli/chat.ts to explain the interactive startup path",
-          prompt: "Trace src/cli/commands.ts and src/cli/chat.ts to explain the interactive startup path.",
+          title:
+            "Trace src/cli/commands.ts and src/cli/chat.ts to explain the interactive startup path",
+          prompt:
+            "Trace src/cli/commands.ts and src/cli/chat.ts to explain the interactive startup path.",
           status: "pending",
         },
       ],

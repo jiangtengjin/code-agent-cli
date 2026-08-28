@@ -7,7 +7,13 @@
  * 优先级高的配置项会覆盖优先级低的同名配置项。
  */
 
-import type { Config, LLMConfig, MCPServerConfig, SessionsConfig } from "../types/config.js";
+import type {
+  AgentsConfig,
+  Config,
+  LLMConfig,
+  MCPServerConfig,
+  SessionsConfig,
+} from "../types/config.js";
 import type { ChatMode } from "../types/mode.js";
 import {
   getDefaultSessionsStorePath,
@@ -20,6 +26,8 @@ import {
 export interface CLIOptions {
   prompt?: string;
   continue?: boolean;
+  plainUi?: boolean;
+  noAltScreen?: boolean;
   mode?: ChatMode;
   model?: string;
   yolo?: boolean;
@@ -59,7 +67,7 @@ function loadEnvConfig(): Partial<Config> {
 }
 
 /** 深度合并配置对象，后层覆盖前层同名属性 */
-function deepMerge(base: Config, ...sources: Partial<Config>[]): Config {
+export function deepMerge(base: Config, ...sources: Partial<Config>[]): Config {
   const result = { ...base };
   for (const source of sources) {
     if (!source) continue;
@@ -86,6 +94,11 @@ function deepMerge(base: Config, ...sources: Partial<Config>[]): Config {
         result.sessions = {
           ...result.sessions,
           ...(value as SessionsConfig),
+        };
+      } else if (key === "agents" && typeof value === "object" && result.agents) {
+        result.agents = {
+          ...result.agents,
+          ...(value as AgentsConfig),
         };
       } else {
         (result as Record<string, unknown>)[key] = value;

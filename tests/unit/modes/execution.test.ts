@@ -357,4 +357,52 @@ describe("mode execution loop", () => {
       error: "Unknown tool: run_terminal",
     });
   });
+
+  it("keeps MCP tools visible in edit mode", async () => {
+    const mcpTool: ToolDefinition = {
+      name: "mcp_github_create_issue",
+      description: "Create an issue",
+      parameters: { type: "object", properties: {} },
+      requiresConfirm: true,
+      execute: vi.fn(async () => ({ success: true, data: "created" })),
+    };
+    const terminalTool: ToolDefinition = {
+      name: "run_terminal",
+      description: "Run a command",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn(async () => ({ success: true, data: "ran" })),
+    };
+    const { provider, context, toolRegistry } = createContext([{ content: "done", model: "test" }]);
+    toolRegistry.register(mcpTool);
+    toolRegistry.register(terminalTool);
+
+    await new EditModeHandler().run("use mcp", context);
+
+    const exposedTools = provider.chat.mock.calls[0][0].tools ?? [];
+    expect(exposedTools.map((entry: ToolDefinition) => entry.name)).toEqual([
+      "mcp_github_create_issue",
+    ]);
+  });
+
+  it("prefers context.systemPrompt over config.systemPrompt", async () => {    const { provider, context } = createContext([{ content: "ok", model: "test" }]);
+    context.config.systemPrompt = "from config";
+    context.systemPrompt = "from agent";
+
+    await new NormalModeHandler().run("hi", context);
+
+    expect(provider.chat).toHaveBeenCalledWith(
+      expect.objectContaining({ systemPrompt: "from agent" }),
+    );
+  });
+
+  it("falls back to config.systemPrompt when context.systemPrompt is absent", async () => {
+    const { provider, context } = createContext([{ content: "ok", model: "test" }]);
+    context.config.systemPrompt = "from config";
+
+    await new NormalModeHandler().run("hi", context);
+
+    expect(provider.chat).toHaveBeenCalledWith(
+      expect.objectContaining({ systemPrompt: "from config" }),
+    );
+  });
 });

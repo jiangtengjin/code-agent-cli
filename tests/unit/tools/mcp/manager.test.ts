@@ -1,11 +1,8 @@
 import { describe, expect, it } from "vitest";
-import {
-  MCPServerManager,
-  buildMCPRegistryToolName,
-} from "../../../../src/tools/mcp/manager.js";
+import { MCPServerManager, buildMCPRegistryToolName } from "../../../../src/tools/mcp/manager.js";
 import { ToolRegistry } from "../../../../src/tools/registry.js";
-import type { ToolDefinition } from "../../../../src/types/tool.js";
 import type { MCPCallToolResult, MCPToolDefinition } from "../../../../src/types/mcp.js";
+import type { ToolDefinition } from "../../../../src/types/tool.js";
 
 class FakeMCPClient {
   connected = false;
@@ -68,9 +65,7 @@ class FailingSecondRegisterToolRegistry extends ToolRegistry {
 
 describe("buildMCPRegistryToolName", () => {
   it("prefixes server and tool names for registry use", () => {
-    expect(buildMCPRegistryToolName("filesystem", "read_file")).toBe(
-      "mcp_filesystem_read_file",
-    );
+    expect(buildMCPRegistryToolName("filesystem", "read_file")).toBe("mcp_filesystem_read_file");
     expect(buildMCPRegistryToolName("my-server", "tool.name")).toBe("mcp_my-server_tool_name");
   });
 });
@@ -149,9 +144,7 @@ describe("MCPServerManager", () => {
 
     const result = await registered?.execute({ key: "customer-123" });
 
-    expect(lookupClient.callToolCalls).toEqual([
-      { name: "lookup", args: { key: "customer-123" } },
-    ]);
+    expect(lookupClient.callToolCalls).toEqual([{ name: "lookup", args: { key: "customer-123" } }]);
     expect(result).toEqual({ success: true, data: "lookup result" });
   });
 

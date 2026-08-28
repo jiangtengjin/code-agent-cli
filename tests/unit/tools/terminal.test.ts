@@ -4,7 +4,7 @@ import { runTerminalTool } from "../../../src/tools/built-in/terminal.js";
 describe("runTerminalTool", () => {
   it("executes a safe command and returns stdout", async () => {
     const result = await runTerminalTool.execute({
-      command: 'node -e "process.stdout.write(\'terminal-ok\')"',
+      command: "node -e \"process.stdout.write('terminal-ok')\"",
     });
 
     expect(result).toMatchObject({
