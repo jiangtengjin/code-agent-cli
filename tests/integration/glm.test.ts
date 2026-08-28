@@ -13,6 +13,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { createSpawnAgentTool } from "../../src/agents/spawn.js";
 import { OpenAICompatibleProvider } from "../../src/llm/adapters/openai-compat.js";
+import { fetchAvailableModels } from "../../src/llm/model-discovery.js";
 import type { RunContext } from "../../src/modes/handler.js";
 import { NormalModeHandler } from "../../src/modes/normal.js";
 import { createTaskTiming } from "../../src/session/execution.js";
@@ -44,6 +45,25 @@ function createContext(toolRegistry = new ToolRegistry()): RunContext {
     confirmToolCall: async () => true,
   };
 }
+
+describe.runIf(API_KEY)("GLM 模型发现", () => {
+  it("拉取到真实可用的模型列表", async () => {
+    const result = await fetchAvailableModels({ baseUrl: BASE_URL, apiKey: API_KEY });
+
+    expect(result.failure).toBeUndefined();
+    expect(result.models.length).toBeGreaterThan(0);
+    expect(result.models.some((model) => model.id === MODEL)).toBe(true);
+    // 硬编码的 glm-4 早已过时，实际列表里是 4.5 起步——这正是要动态获取的理由
+    expect(result.models.some((model) => model.id === "glm-4")).toBe(false);
+  }, TIMEOUT);
+
+  it("无效 key 被归类为 unauthorized 而非静默失败", async () => {
+    const result = await fetchAvailableModels({ baseUrl: BASE_URL, apiKey: "invalid.key" });
+
+    expect(result.failure).toBe("unauthorized");
+    expect(result.models).toEqual([]);
+  }, TIMEOUT);
+});
 
 describe.runIf(API_KEY)("GLM provider 兼容性", () => {
   it("返回文本内容与 token 用量", async () => {
