@@ -17,6 +17,7 @@ import { UsageTracker } from "../session/usage.js";
 import { createScopedToolRegistry } from "../tools/scoped-registry.js";
 import type { AgentDefinition } from "../types/agent.js";
 import type { LLMConfig } from "../types/config.js";
+import type { LLMMessage } from "../types/provider.js";
 import type { ToolDefinition, ToolResult } from "../types/tool.js";
 import { isAbortError } from "../utils/error.js";
 
@@ -116,6 +117,42 @@ function truncate(value: string, limit: number): { text: string; truncated: bool
   }
 
   return { text: `${value.slice(0, limit)}\n…（结论过长已截断）`, truncated: true };
+}
+
+/** 单条工具结果在部分进展摘要里的长度上限 */
+const PARTIAL_ENTRY_LIMIT = 400;
+
+/** 部分进展摘要里最多包含的工具结果条数，取最后几条（离结论最近） */
+const PARTIAL_ENTRY_COUNT = 5;
+
+/**
+ * 从子 agent 的消息历史里提取工具调用结果，供未收敛时回传。
+ *
+ * 只取工具结果而非完整历史：父级需要的是「查到了什么」，而非子 agent 的
+ * 推理过程——后者正是隔离要挡掉的东西。
+ */
+function summarizeChildProgress(messages: LLMMessage[]): string {
+  const entries: string[] = [];
+
+  for (const message of messages) {
+    if (message.role !== "tool" || typeof message.content !== "string") continue;
+
+    let payload = message.content;
+    try {
+      const parsed = JSON.parse(message.content) as { success?: boolean; data?: unknown };
+      if (parsed.success === false) continue;
+      payload = typeof parsed.data === "string" ? parsed.data : JSON.stringify(parsed.data);
+    } catch {
+      // 非 JSON 时按原文处理
+    }
+
+    if (!payload) continue;
+    const clipped =
+      payload.length > PARTIAL_ENTRY_LIMIT ? `${payload.slice(0, PARTIAL_ENTRY_LIMIT)}…` : payload;
+    entries.push(`- ${message.toolName ?? "tool"}: ${clipped}`);
+  }
+
+  return entries.slice(-PARTIAL_ENTRY_COUNT).join("\n");
 }
 
 /**
@@ -241,10 +278,24 @@ export function createSpawnAgentTool(deps: SpawnAgentDeps): ToolDefinition {
 
         const content = result.assistantContent?.trim() ?? "";
         if (!content) {
-          deps.onAgentFinish?.(agentId, false, "无结论返回");
+          // 迭代耗尽而未收敛时，子 agent 的探索发现全在它的消息历史里。直接报
+          // 「无结论」会把这些发现连同已花掉的 token 一起丢弃，父 agent 只能从
+          // 头再来。改为回传部分进展，让父级自己判断够不够用。
+          const partial = summarizeChildProgress(childContext.messages);
+          deps.onAgentFinish?.(agentId, false, partial ? "仅有部分进展" : "无结论返回");
+
+          if (!partial) {
+            return {
+              success: false,
+              error: `agent ${definition.name} 未返回任何结论`,
+            };
+          }
+
           return {
             success: false,
-            error: `agent ${definition.name} 未返回任何结论`,
+            error:
+              `agent ${definition.name} 在 ${result.iterations} 轮内未收敛，以下是它已经查到的内容，` +
+              `可据此判断是补充任务描述重派，还是自行继续：\n${partial}`,
           };
         }
 

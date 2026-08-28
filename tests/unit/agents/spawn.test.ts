@@ -229,7 +229,64 @@ describe("createSpawnAgentTool", () => {
     const result = await spawn.execute({ agent_type: "code-explorer", task: "查找" });
 
     expect(result.success).toBe(false);
+    // 未知工具的结果是 success:false，摘要会跳过，故这里确实无进展可回传
     expect(result.error).toContain("未返回任何结论");
+  });
+
+  it("returns partial findings when the sub agent runs out of iterations", async () => {
+    // 迭代耗尽但已查到东西时，不该把发现连同花掉的 token 一起丢弃
+    const tool: ToolDefinition = {
+      name: "grep_search",
+      description: "Search",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn(async () => ({
+        success: true,
+        data: "src/tools/registry.ts:6: register(tool)",
+      })),
+    };
+    const responses = Array.from({ length: 3 }, (_, index) => ({
+      content: "",
+      model: "test",
+      toolCalls: [{ id: `call-${index}`, name: "grep_search", args: { pattern: "register" } }],
+    }));
+    const { context } = createParentContext(responses, [tool]);
+
+    const spawn = createSpawnAgentTool({
+      definitions: [explorer({ maxIterations: 3, tools: ["grep_search"] })],
+      parentContext: () => context,
+    });
+
+    const result = await spawn.execute({ agent_type: "code-explorer", task: "查找" });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("未收敛");
+    expect(result.error).toContain("registry.ts:6");
+    expect(result.error).toContain("grep_search");
+  });
+
+  it("caps the number of partial findings it reports back", async () => {
+    const tool: ToolDefinition = {
+      name: "grep_search",
+      description: "Search",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn(async () => ({ success: true, data: "hit" })),
+    };
+    const responses = Array.from({ length: 9 }, (_, index) => ({
+      content: "",
+      model: "test",
+      toolCalls: [{ id: `call-${index}`, name: "grep_search", args: {} }],
+    }));
+    const { context } = createParentContext(responses, [tool]);
+
+    const spawn = createSpawnAgentTool({
+      definitions: [explorer({ maxIterations: 9, tools: ["grep_search"] })],
+      parentContext: () => context,
+    });
+
+    const result = await spawn.execute({ agent_type: "code-explorer", task: "查找" });
+
+    // 只保留最后 5 条，避免把子 agent 的整段历史倒回父级上下文
+    expect(result.error?.match(/- grep_search:/g)).toHaveLength(5);
   });
 
   it("propagates abort instead of turning it into a tool failure", async () => {
