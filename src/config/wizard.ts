@@ -4,13 +4,15 @@
  * code-agent init 引导式配置流程：
  *   1. 选择模型厂商
  *   2. 输入 API Key
- *   3. 选择默认对话模式
- *   4. 自动写入全局配置文件
+ *   3. 从厂商真实可用的模型列表中选择（拉取失败时回退到手动输入）
+ *   4. 确认自主模式
+ *   5. 自动写入全局配置文件
  *
  * 支持五个厂商预设：DeepSeek / Qwen / GLM / Ollama / 手动配置
  */
 
 import chalk from "chalk";
+import { type DiscoveredModel, fetchAvailableModels } from "../llm/model-discovery.js";
 import type { Config } from "../types/config.js";
 import { getGlobalConfigPath, writeConfigFile } from "./manager.js";
 
@@ -37,7 +39,7 @@ async function promptSelect(options: {
     console.log(`  ${chalk.cyan(`${i + 1}.`)} ${label}`);
     console.log(`     ${chalk.dim(opt.hint)}`);
   }
-  const answer = await promptInput(chalk.dim("  输入编号 (1-5): "));
+  const answer = await promptInput(chalk.dim(`  输入编号 (1-${options.options.length}): `));
   const index = Number.parseInt(answer) - 1;
   if (index >= 0 && index < options.options.length) {
     return options.options[index].value;
@@ -46,15 +48,71 @@ async function promptSelect(options: {
   return options.options[0].value;
 }
 
-/** 根据厂商返回推荐的模型名称 */
-function getDefaultModel(provider: string): string {
+/**
+ * 让用户从厂商真实可用的模型里选。
+ *
+ * 拉不到列表时回退到手动输入而非直接失败——厂商可能没实现 /models，
+ * 或者用户网络受限，这两种情况都不该让配置流程中断。
+ */
+async function selectModel(
+  provider: string,
+  apiKey: string,
+  baseUrl: string | undefined,
+): Promise<string> {
+  const fallback = getFallbackModel(provider);
+
+  if (!baseUrl) {
+    return promptModelManually(fallback);
+  }
+
+  console.log();
+  console.log(chalk.dim("  正在获取可用模型列表..."));
+  const result = await fetchAvailableModels({ baseUrl, apiKey });
+
+  if (result.models.length === 0) {
+    console.log(chalk.yellow(`  ${result.message ?? "无法获取模型列表"}`));
+    return promptModelManually(fallback);
+  }
+
+  console.log();
+  const chosen = await promptSelect({
+    message: `  找到 ${result.models.length} 个可用模型，请选择：`,
+    options: toModelOptions(result.models),
+  });
+
+  return chosen;
+}
+
+/**
+ * 把发现结果转成选择列表项。
+ *
+ * 单独抽出是为了可测：selectModel 本身要读 stdin 和发网络请求，而这里的
+ * 标注逻辑（哪个是最新、提供方怎么显示）才是真正会出错的部分。
+ */
+export function toModelOptions(
+  models: DiscoveredModel[],
+): { value: string; label: string; hint: string }[] {
+  return models.map((model, index) => ({
+    value: model.id,
+    label: index === 0 ? `${model.id}（最新）` : model.id,
+    hint: model.ownedBy ? `提供方 ${model.ownedBy}` : "",
+  }));
+}
+
+async function promptModelManually(fallback: string): Promise<string> {
+  const input = await promptInput(chalk.dim(`  输入模型名（回车使用 ${fallback}）: `));
+  return input || fallback;
+}
+
+/** 拉取失败时的兜底模型名。仅作占位，用户可随时改配置。 */
+export function getFallbackModel(provider: string): string {
   const models: Record<string, string> = {
     deepseek: "deepseek-v4-flash",
     qwen: "qwen-plus",
-    glm: "glm-4",
+    glm: "glm-4.6",
     ollama: "qwen2.5-coder:7b",
   };
-  return models[provider] || "deepseek-v4-flash";
+  return models[provider] ?? "deepseek-v4-flash";
 }
 
 /** 根据厂商返回默认 API Base URL */
@@ -121,12 +179,18 @@ export async function setupWizard(): Promise<void> {
   if (provider === "custom") {
     apiKey = await promptInput(chalk.dim("输入 API Key: "));
     baseUrl = await promptInput(chalk.dim("输入 API Base URL: "));
-  } else if (provider !== "ollama") {
+  } else if (provider === "ollama") {
+    // 本地服务无需 key，但仍要 baseUrl 才能查询模型列表
+    baseUrl = getDefaultBaseUrlForProvider(provider);
+  } else {
     apiKey = await promptInput(chalk.dim("输入 API Key（留空则通过环境变量配置）: "));
     baseUrl = getDefaultBaseUrlForProvider(provider);
   }
 
-  // Step 3: 确认是否启用自主模式
+  // Step 3: 从厂商真实可用的模型里选
+  const model = await selectModel(provider, apiKey, baseUrl);
+
+  // Step 4: 确认是否启用自主模式
   const isYolo = await promptInput(chalk.dim("启用 --yolo 自主模式（跳过用户确认）？(y/N): "));
   const yolo = isYolo.toLowerCase() === "y" || isYolo.toLowerCase() === "yes";
 
@@ -134,7 +198,7 @@ export async function setupWizard(): Promise<void> {
   const config: Config = {
     model: {
       provider,
-      model: getDefaultModel(provider),
+      model,
       ...(apiKey ? { apiKey } : {}),
       ...(baseUrl ? { baseUrl } : {}),
     },
@@ -145,5 +209,5 @@ export async function setupWizard(): Promise<void> {
 
   writeConfigFile(getGlobalConfigPath(), config);
   console.log();
-  console.log(chalk.green("✅ 配置完成！运行 code-agent 开始使用"));
+  console.log(chalk.green(`✅ 配置完成！使用模型 ${model}，运行 code-agent 开始使用`));
 }
